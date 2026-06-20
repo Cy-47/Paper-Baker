@@ -20,6 +20,7 @@ import {
 } from "../helpers/project-files.js";
 import { reconcilePapers, papersInSync, type BindMode } from "../helpers/reconcile.js";
 import { isInteractive, promptLine, promptChoice } from "../helpers/prompt.js";
+import { applyRootBrief } from "../helpers/root-brief.js";
 
 // ---------------------------------------------------------------------------
 // Small command-layer helpers
@@ -66,7 +67,10 @@ function errMsg(err: unknown): string {
 // it stays a local-only project; `pb sync` publishes it later.
 // ---------------------------------------------------------------------------
 
-export async function runCreate(name: string | undefined): Promise<void> {
+export async function runCreate(
+  name: string | undefined,
+  opts: { brief?: boolean } = {},
+): Promise<void> {
   if (projectConfigExists()) {
     console.error("Error: a Paper Baker project already exists in this directory.");
     process.exit(1);
@@ -76,6 +80,7 @@ export async function runCreate(name: string | undefined): Promise<void> {
   scaffoldProjectFiles();
 
   const token = await resolveAuthToken();
+  let published = false;
   if (token) {
     try {
       const project = await makeClient(token).putProject(
@@ -89,9 +94,9 @@ export async function runCreate(name: string | undefined): Promise<void> {
         stableId: project.projectId,
       });
       console.log(
-        `Created "${project.name}" (slug: ${project.slug}) on the server.`,
+        `Created "${project.name}" (id: ${project.slug}) on the server.`,
       );
-      return;
+      published = true;
     } catch (err) {
       // Don't lose the project over a network blip: fall through to a local
       // binding that `pb sync` can publish once connectivity returns.
@@ -101,10 +106,22 @@ export async function runCreate(name: string | undefined): Promise<void> {
     }
   }
 
-  saveProjectConfig({ name: projectName });
-  console.log(
-    `Created local project "${projectName}". Run \`pb sync\` to put it on the server.`,
-  );
+  if (!published) {
+    saveProjectConfig({ name: projectName });
+    console.log(
+      `Created local project "${projectName}". Run \`pb sync\` to put it on the server.`,
+    );
+  }
+
+  await announceRootBrief(opts.brief === false);
+}
+
+/** Run the one-time root-brief step and print a one-line result. */
+async function announceRootBrief(disabled: boolean): Promise<void> {
+  const res = await applyRootBrief({ disabled });
+  if (res.decision === "added" && res.name) {
+    console.log(`Added a Paper Baker brief to ${res.name} (remove with \`--no-brief\` next time).`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -113,7 +130,7 @@ export async function runCreate(name: string | undefined): Promise<void> {
 
 async function runBind(
   slug: string,
-  opts: { merge?: boolean; replaceLocal?: boolean },
+  opts: { merge?: boolean; replaceLocal?: boolean; brief?: boolean },
 ): Promise<void> {
   if (opts.merge && opts.replaceLocal) {
     console.error("Error: pass at most one of --merge / --replace-local.");
@@ -194,10 +211,11 @@ async function runBind(
   rebuildArtifacts(local);
 
   console.log(
-    `Bound to "${project.name}" (slug: ${project.slug}) via ${mode}.` +
+    `Bound to "${project.name}" (id: ${project.slug}) via ${mode}.` +
       (pushed > 0 ? ` Pushed ${pushed} local paper(s) up.` : ""),
   );
-  console.log("Run `pb sync` to download any missing tex sources.");
+
+  await announceRootBrief(opts.brief === false);
 }
 
 // ---------------------------------------------------------------------------
@@ -219,7 +237,7 @@ async function runRename(name: string): Promise<void> {
   // anything local, keeping rename effectively atomic.
   const updated = await client.updateProject(cfg.stableId!, { name });
   saveProjectConfig({ ...cfg, name: updated.name, slug: updated.slug });
-  console.log(`Renamed to "${updated.name}" (slug: ${updated.slug}).`);
+  console.log(`Renamed to "${updated.name}" (id: ${updated.slug}).`);
 }
 
 async function runDelete(opts: { yes?: boolean }): Promise<void> {
@@ -261,7 +279,8 @@ function runUnbind(): void {
   // Keep the papers/files; sever the remote link by dropping the stable id.
   // The project reverts to offline and a later `pb sync` would re-publish it
   // (minting a fresh id), rather than touching the remote we just detached from.
-  saveProjectConfig({ name: cfg.name });
+  // Keep rootBrief so re-binding this dir doesn't re-prompt for the brief.
+  saveProjectConfig({ name: cfg.name, rootBrief: cfg.rootBrief });
   console.log(
     "Unbound. This directory is now a local-only project; the remote was left intact.",
   );
@@ -280,8 +299,9 @@ export function registerProjectCommands(program: Command): void {
     .command("create")
     .description("Create a project here (publishes to the server when logged in)")
     .argument("[name]", "Project name (defaults to the directory name)")
-    .action(async (name: string | undefined) => {
-      await runCreate(name);
+    .option("--no-brief", "Don't add a Paper Baker brief to the root AGENTS.md/CLAUDE.md")
+    .action(async (name: string | undefined, opts: { brief?: boolean }) => {
+      await runCreate(name, opts);
     });
 
   project
@@ -310,12 +330,18 @@ export function registerProjectCommands(program: Command): void {
   project
     .command("bind")
     .description("Bind this directory to an existing remote project")
-    .argument("<slug>", "Slug (or id) of the project to bind")
+    .argument("<id>", "Id of the project to bind")
     .option("--merge", "On drift, union local and remote papers")
     .option("--replace-local", "On drift, replace local state with the remote")
-    .action(async (slug: string, opts: { merge?: boolean; replaceLocal?: boolean }) => {
-      await runBind(slug, opts);
-    });
+    .option("--no-brief", "Don't add a Paper Baker brief to the root AGENTS.md/CLAUDE.md")
+    .action(
+      async (
+        slug: string,
+        opts: { merge?: boolean; replaceLocal?: boolean; brief?: boolean },
+      ) => {
+        await runBind(slug, opts);
+      },
+    );
 
   project
     .command("rename")

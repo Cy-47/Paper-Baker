@@ -7,7 +7,7 @@ import { registerLoginCommands } from "./commands/login.js";
 import { registerProjectCommands } from "./commands/project.js";
 import { registerPaperCommands } from "./commands/papers.js";
 import { registerReadCommands } from "./commands/read.js";
-import { registerSyncCommand } from "./commands/sync.js";
+import { registerSyncCommand, syncProject } from "./commands/sync.js";
 import { registerUpdateCommand } from "./commands/update.js";
 import { registerUninstallCommand } from "./commands/uninstall.js";
 
@@ -37,6 +37,33 @@ program.hook("preAction", (_thisCommand, actionCommand) => {
   console.error(
     "Not signed in — run `pb login` to sync to your account (set PAPERBAKER_QUIET=1 to hide).",
   );
+});
+
+// After any in-project command, quietly reconcile with the server: push local
+// changes, pull remote ones, refresh derived files. Best-effort — it never
+// changes a command's outcome or exit code, and routes output to stderr so
+// --json stays clean. Exempt: auth/maintenance commands, the standalone arxiv
+// `search`, the explicit `sync` (which runs the full, loud version itself), and
+// `unbind` (a quiet sync would re-publish the project it just detached).
+// PAPERBAKER_NO_SYNC turns the whole thing off for latency-sensitive callers.
+const NO_AUTOSYNC = new Set([
+  "login",
+  "logout",
+  "whoami",
+  "update",
+  "uninstall",
+  "sync",
+  "search",
+  "unbind",
+]);
+program.hook("postAction", async (_thisCommand, actionCommand) => {
+  if (NO_AUTOSYNC.has(actionCommand.name())) return;
+  if (process.env["PAPERBAKER_NO_SYNC"]) return;
+  try {
+    await syncProject({ quiet: true });
+  } catch {
+    // Auto-sync is a best-effort convenience; never let it fail the command.
+  }
 });
 
 registerLoginCommands(program);

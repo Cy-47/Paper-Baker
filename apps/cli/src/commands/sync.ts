@@ -9,11 +9,12 @@ import {
   loadProjectConfig,
   saveProjectConfig,
   getProjectDir,
+  isSynced,
   type ProjectConfig,
 } from "../config.js";
 import { resolveAuthToken } from "../helpers/auth.js";
 import { downloadAndExtractSource } from "../helpers/download.js";
-import { writeAgentsMd } from "../helpers/agents-md.js";
+import { writeProjectReadme } from "../helpers/project-readme.js";
 import { getSourceDir, ensureSourcesRepo } from "../helpers/sources.js";
 import {
   projectConfigExists,
@@ -31,6 +32,17 @@ import { reconcilePapers } from "../helpers/reconcile.js";
 // (re-download missing sources, regenerate artifacts).
 // ---------------------------------------------------------------------------
 
+export interface SyncOptions {
+  /**
+   * Quiet auto-sync — the mode used by the post-command hook. Routine progress
+   * is suppressed and the few significant lines (first publish, push failures)
+   * go to stderr, so a command's stdout (notably `--json`) stays clean. A
+   * transient network failure degrades silently, and a pass with no credential
+   * is a no-op rather than rewriting local files behind a read command.
+   */
+  quiet?: boolean;
+}
+
 export function registerSyncCommand(program: Command): void {
   program
     .command("sync")
@@ -42,49 +54,86 @@ export function registerSyncCommand(program: Command): void {
         console.error("Error: No Paper Baker project found. Run `pb project create` first.");
         process.exit(1);
       }
-
-      const cfg = loadProjectConfig()!;
-      const token = await resolveAuthToken();
-      let papers = loadPapers();
-
-      if (token) {
-        papers = await syncWithServer(token, cfg, papers);
-      } else {
-        console.log(
-          "Not logged in — syncing local state only. Run `pb login` to publish to your account.",
-        );
-      }
-
-      // Re-download any missing sources for the (possibly merged) paper set.
-      ensureSourcesRepo();
-      let downloaded = 0;
-      for (const paper of papers) {
-        const sourceDir = getSourceDir(paper);
-        if (fs.existsSync(sourceDir)) continue;
-
-        if (paper.source.type === "arxiv") {
-          console.log(`Downloading source for ${paper.paperId}...`);
-          try {
-            await downloadAndExtractSource(paper.source.id, sourceDir);
-            downloaded++;
-          } catch (err) {
-            console.warn(`  Failed: ${errMsg(err)}`);
-          }
-        }
-      }
-      if (downloaded > 0) {
-        console.log(`Downloaded ${downloaded} source(s).`);
-      }
-
-      // Regenerate the derived artifacts from the final paper set.
-      const projectDir = getProjectDir();
-      fs.writeFileSync(path.join(projectDir, "refs.bib"), renderBibtexFile(papers));
-      console.log("Regenerated refs.bib");
-      writeAgentsMd(papers);
-      console.log("Regenerated AGENTS.md");
-
-      console.log("Sync complete.");
+      await syncProject();
     });
+}
+
+/**
+ * Reconcile the current project with the server and rebuild derived files:
+ * publish/push local changes, pull remote ones down, re-download missing
+ * sources, regenerate refs.bib + README. Returns false when there's nothing to
+ * do (not a project here, or a quiet pass with no credential). Never throws on a
+ * network error — sync is best-effort, so callers (notably the post-command
+ * auto-sync) can ignore the outcome.
+ */
+export async function syncProject(opts: SyncOptions = {}): Promise<boolean> {
+  const quiet = opts.quiet ?? false;
+  if (!projectConfigExists()) return false;
+
+  const cfg = loadProjectConfig()!;
+
+  // The automatic post-command sync only reconciles projects already bound to
+  // the server. It never mints an id or publishes an offline (no stableId)
+  // project — that promotion stays reserved for an explicit `pb sync` (or
+  // `pb project create` while logged in), so a routine command can't silently
+  // put a local-only project online.
+  if (quiet && !isSynced(cfg)) return false;
+
+  const token = await resolveAuthToken();
+
+  if (!token) {
+    // A quiet auto-sync has no server to reconcile against, and we don't want a
+    // read command silently rewriting local files — so it's a no-op. The
+    // explicit `pb sync` still does a local-only re-download + regenerate pass.
+    if (quiet) return false;
+    console.log(
+      "Not logged in — syncing local state only. Run `pb login` to publish to your account.",
+    );
+    await ensureSourcesAndArtifacts(loadPapers(), quiet);
+    console.log("Sync complete.");
+    return true;
+  }
+
+  const papers = await syncWithServer(token, cfg, loadPapers(), quiet);
+  await ensureSourcesAndArtifacts(papers, quiet);
+  if (!quiet) console.log("Sync complete.");
+  return true;
+}
+
+/** Re-download any missing tex sources, then regenerate refs.bib + README. */
+async function ensureSourcesAndArtifacts(
+  papers: PaperMetadata[],
+  quiet: boolean,
+): Promise<void> {
+  const info = quiet ? () => {} : (m: string) => console.log(m);
+
+  ensureSourcesRepo();
+  let downloaded = 0;
+  for (const paper of papers) {
+    const sourceDir = getSourceDir(paper);
+    if (fs.existsSync(sourceDir)) continue;
+
+    if (paper.source.type === "arxiv") {
+      info(`Downloading source for ${paper.paperId}...`);
+      try {
+        await downloadAndExtractSource(paper.source.id, sourceDir);
+        downloaded++;
+      } catch (err) {
+        // A missing source is a real (recoverable) problem — surface it on
+        // stderr even in quiet mode.
+        console.warn(`  Could not download ${paper.paperId}: ${errMsg(err)}`);
+      }
+    }
+  }
+  if (downloaded > 0) info(`Downloaded ${downloaded} source(s).`);
+
+  const projectDir = getProjectDir();
+  fs.writeFileSync(path.join(projectDir, "refs.bib"), renderBibtexFile(papers));
+  writeProjectReadme(papers);
+  if (!quiet) {
+    console.log("Regenerated refs.bib");
+    console.log("Regenerated paperbaker/README.md");
+  }
 }
 
 /**
@@ -98,7 +147,13 @@ async function syncWithServer(
   token: string,
   cfg: ProjectConfig,
   localPapers: PaperMetadata[],
+  quiet: boolean,
 ): Promise<PaperMetadata[]> {
+  const info = quiet ? () => {} : (m: string) => console.log(m);
+  // Significant/error lines always go to stderr so a command's stdout (--json)
+  // stays clean even when the auto-sync has something to say.
+  const notify = (m: string) => console.warn(m);
+
   const client = new PaperBakerClient({ baseUrl: getApiUrl(), token });
   // The id is client-owned, so it stays constant across accounts. Absent ⇒ this
   // is the first publish; mint one now.
@@ -113,9 +168,14 @@ async function syncWithServer(
       "Synced from the Paper Baker CLI",
     );
   } catch (err) {
-    console.warn(
-      `Could not reach the server (${errMsg(err)}). Syncing local state only.`,
-    );
+    // Transient unreachable: keep local state and degrade gracefully. A quiet
+    // auto-sync stays silent — the command already did its job locally, and a
+    // later online command (or explicit `pb sync`) will reconcile.
+    if (!quiet) {
+      console.warn(
+        `Could not reach the server (${errMsg(err)}). Syncing local state only.`,
+      );
+    }
     return localPapers;
   }
 
@@ -139,21 +199,23 @@ async function syncWithServer(
       await client.addPaperToProject(stableId, paper.paperId);
       pushed++;
     } catch (err) {
-      console.warn(`  Could not push ${paper.paperId}: ${errMsg(err)}`);
+      // A failed push is real drift — surface it even in quiet mode.
+      notify(`  Could not push ${paper.paperId}: ${errMsg(err)}`);
     }
   }
 
   savePapers(merged);
-  saveProjectConfig({ name: project.name, slug: project.slug, stableId });
+  // Preserve the one-time root-brief decision across the re-save.
+  saveProjectConfig({ ...cfg, name: project.name, slug: project.slug, stableId });
 
+  // A first publish only ever happens through an explicit `pb sync` — the quiet
+  // auto-sync bails on unbound projects before reaching here.
   if (firstPublish) {
-    console.log(
-      `Published as "${project.name}" (slug: ${project.slug}); pushed ${pushed} paper(s).`,
+    info(
+      `Published as "${project.name}" (id: ${project.slug}); pushed ${pushed} paper(s).`,
     );
   } else {
-    console.log(
-      `Synced with server: pushed ${pushed}, ${merged.length} paper(s) total.`,
-    );
+    info(`Synced with server: pushed ${pushed}, ${merged.length} paper(s) total.`);
   }
   return merged;
 }

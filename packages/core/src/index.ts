@@ -5,3 +5,5 @@ export * from "./tex.js";
 export * from "./arxiv-throttle.js";
 export * from "./arxiv-query.js";
 export * from "./arxiv-parse.js";
+export * from "./agent-brief.js";
+export * from "./project-readme.js";

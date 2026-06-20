@@ -128,6 +128,17 @@ describe("POST /projects — create", () => {
     expect((doc.data() as ProjectShape).slug).toBe("my-research");
   });
 
+  it("keeps a CJK name as the slug rather than transliterating or dropping it", async () => {
+    const p = await createProject(ALICE, "机器学习");
+    expect(p.slug).toBe("机器学习");
+  });
+
+  it("falls back to the stable id when a name has nothing slug-able", async () => {
+    const p = await createProject(ALICE, "🎉🎉🎉");
+    expect(p.slug).toBe(p.projectId);
+    expect(isValidProjectId(p.projectId)).toBe(true);
+  });
+
   it("requires a name", async () => {
     const res = await call("POST", "/", ALICE, {});
     expect(res.status).toBe(400);

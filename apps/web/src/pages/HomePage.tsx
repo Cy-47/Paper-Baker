@@ -38,7 +38,7 @@ export default function HomePage() {
           style={{ gridTemplateColumns: "repeat(auto-fill,minmax(160px,1fr))" }}
         >
           {recentProjects.map((p) => (
-            <Link key={p.projectId} to={`/projects/${p.projectId}`} className="no-underline">
+            <Link key={p.projectId} to={`/projects/${p.slug}`} className="no-underline">
               <Card>
                 <Card.Header>
                   <Card.Title>{p.name}</Card.Title>

@@ -63,6 +63,151 @@
   --overlay-foreground: oklch(0.92 0.008 80);
 }
 
+/* Docs headings sit below the sticky header when jumped to via the TOC. */
+[data-docs-content] :where(h1, h2, h3) {
+  scroll-margin-top: 5rem;
+}
+
+/* Rendered-markdown content (docs pages). Scoped to .markdown so it never leaks
+   into the app UI; all colors come from the theme tokens above. */
+.markdown {
+  color: var(--foreground);
+  font-size: 0.95rem;
+  line-height: 1.7;
+}
+.markdown > :first-child {
+  margin-top: 0;
+}
+.markdown > :last-child {
+  margin-bottom: 0;
+}
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4 {
+  color: var(--foreground);
+  font-weight: 600;
+  line-height: 1.25;
+}
+.markdown h1 {
+  font-size: 1.875rem;
+  letter-spacing: -0.02em;
+  margin: 0 0 1rem;
+}
+.markdown h2 {
+  font-size: 1.375rem;
+  margin: 2rem 0 0.75rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--border);
+}
+/* h3 = group label (e.g. command categories) */
+.markdown h3 {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 2rem 0 0.85rem;
+}
+/* h4 = a command signature: clean monospace, no code chip */
+.markdown h4 {
+  margin: 1.6rem 0 0.4rem;
+  font-size: 0.95rem;
+}
+.markdown h4 code {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: 1em;
+  color: var(--foreground);
+}
+/* hover "#" anchor on section headings */
+.markdown :is(h2, h3) {
+  position: relative;
+}
+.markdown .heading-anchor {
+  margin-left: 0.4rem;
+  color: var(--muted);
+  font-weight: 400;
+  text-decoration: none;
+  opacity: 0;
+  transition:
+    opacity 0.15s,
+    color 0.15s;
+}
+.markdown :is(h2, h3):hover .heading-anchor {
+  opacity: 1;
+}
+.markdown .heading-anchor:hover {
+  color: var(--accent);
+}
+.markdown p,
+.markdown ul,
+.markdown ol {
+  margin: 0 0 1rem;
+}
+.markdown ul,
+.markdown ol {
+  padding-left: 1.4rem;
+}
+.markdown li {
+  margin: 0.3rem 0;
+}
+.markdown li::marker {
+  color: var(--muted);
+}
+.markdown a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.markdown a:hover {
+  text-decoration: underline;
+}
+.markdown strong {
+  color: var(--foreground);
+  font-weight: 600;
+}
+.markdown hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 2rem 0;
+}
+.markdown blockquote {
+  margin: 0 0 1rem;
+  padding: 0.2rem 0 0.2rem 1rem;
+  border-left: 3px solid var(--border-secondary);
+  color: var(--muted);
+}
+/* Inline code */
+.markdown code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85em;
+  background: var(--background-secondary);
+  color: var(--foreground);
+  padding: 0.12em 0.38em;
+  border-radius: 0.35rem;
+}
+/* Fenced code blocks render via the shared CommandBlock (see Markdown.tsx). */
+.markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 1rem;
+  font-size: 0.9rem;
+}
+.markdown th,
+.markdown td {
+  border: 1px solid var(--border);
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+}
+.markdown th {
+  background: var(--surface-secondary);
+  font-weight: 600;
+}
+.markdown img {
+  max-width: 100%;
+}
+
 /* Header search box: inset (inner) shadow instead of the default drop shadow. */
 .search-inset input {
   box-shadow:

@@ -34,10 +34,17 @@ describe("slugify", () => {
     expect(slugify("Café Déjà")).toBe("cafe-deja");
   });
 
+  it("keeps CJK and other non-Latin letters rather than stripping them", () => {
+    expect(slugify("机器学习")).toBe("机器学习");
+    expect(slugify("已经")).toBe("已经");
+    expect(slugify("深度学习 2024")).toBe("深度学习-2024");
+    expect(slugify("研究 Notes")).toBe("研究-notes");
+  });
+
   it("returns empty string when nothing slug-able remains", () => {
-    expect(slugify("已经")).toBe("");
     expect(slugify("!!!")).toBe("");
     expect(slugify("")).toBe("");
+    expect(slugify("🎉🎉🎉")).toBe("");
   });
 
   it("caps length at 64 chars without a trailing hyphen", () => {

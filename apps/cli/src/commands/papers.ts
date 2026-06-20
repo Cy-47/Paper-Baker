@@ -15,7 +15,7 @@ import {
 } from "../config.js";
 import { resolveAuthToken } from "../helpers/auth.js";
 import { downloadAndExtractSource } from "../helpers/download.js";
-import { writeAgentsMd } from "../helpers/agents-md.js";
+import { writeProjectReadme } from "../helpers/project-readme.js";
 import { getSourceDir, ensureSourcesRepo } from "../helpers/sources.js";
 
 // ---------------------------------------------------------------------------
@@ -44,8 +44,8 @@ function regenerateBib(papers: PaperMetadata[], cwd?: string): void {
   fs.writeFileSync(path.join(dir, "refs.bib"), renderBibtexFile(papers));
 }
 
-function regenerateAgentsMd(papers: PaperMetadata[], cwd?: string): void {
-  writeAgentsMd(papers, cwd);
+function regenerateReadme(papers: PaperMetadata[], cwd?: string): void {
+  writeProjectReadme(papers, cwd);
 }
 
 function ensureProjectInit(): void {
@@ -131,9 +131,9 @@ export function registerPaperCommands(program: Command): void {
       papers.push(metadata);
       savePapers(papers);
 
-      // Regenerate refs.bib and AGENTS.md
+      // Regenerate refs.bib and paperbaker/README.md
       regenerateBib(papers);
-      regenerateAgentsMd(papers);
+      regenerateReadme(papers);
 
       // Mirror to the server when this project is synced. Local state is already
       // written, so a failure here isn't fatal — but surface it so the user knows
@@ -186,9 +186,9 @@ export function registerPaperCommands(program: Command): void {
       papers.splice(idx, 1);
       savePapers(papers);
 
-      // Regenerate refs.bib and AGENTS.md
+      // Regenerate refs.bib and paperbaker/README.md
       regenerateBib(papers);
-      regenerateAgentsMd(papers);
+      regenerateReadme(papers);
 
       // Mirror to the server when synced. Surface failures: if the remote delete
       // doesn't land, the paper lives on and a later `pb sync` will re-add it

@@ -116,11 +116,15 @@ export const PROJECT_DIR = "paperbaker";
  *                  server. There is no offline-id sentinel.
  *   - `slug`     — the server's human handle (set alongside stableId on sync);
  *                  what users type for `pb project bind`.
+ *   - `rootBrief`— records the one-time decision about the root agent brief (see
+ *                  helpers/root-brief.ts): "added" once injected, "declined" if
+ *                  the user opted out. Its presence means "don't ask again".
  */
 export interface ProjectConfig {
   name: string;
   stableId?: string;
   slug?: string;
+  rootBrief?: "added" | "declined";
 }
 
 /** True once the project has been synced to the server (has a stable id). */

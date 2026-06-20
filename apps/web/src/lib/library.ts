@@ -140,10 +140,17 @@ export function subscribeProjects(cb: (projects: ProjectDoc[]) => void) {
 // Writes — through the Functions API (one shared backend implementation)
 // ---------------------------------------------------------------------------
 
-/** Create a project (backend mints the stable id + unique slug). Returns its id. */
-export async function createProject(name: string, description = ""): Promise<string> {
+/**
+ * Create a project (backend mints the stable id + unique slug). Returns both the
+ * stable `projectId` (used for filing papers and other mutations) and the `slug`
+ * (the user-facing id, used to build the project URL).
+ */
+export async function createProject(
+  name: string,
+  description = "",
+): Promise<{ projectId: string; slug: string }> {
   const project = await (await getApiClient()).createProject(name.trim(), description.trim());
-  return project.projectId;
+  return { projectId: project.projectId, slug: project.slug };
 }
 
 /** Rename a project; the stable projectId (and every binding) is unchanged. */

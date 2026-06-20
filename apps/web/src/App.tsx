@@ -5,6 +5,9 @@ import { SavePanelProvider } from "./hooks/useSavePanel";
 import AppShell from "./components/AppShell";
 import LoginPage from "./pages/LoginPage";
 import LandingPage from "./pages/LandingPage";
+import QuickstartPage from "./pages/QuickstartPage";
+import DocsPage from "./pages/DocsPage";
+import CliDocsPage from "./pages/CliDocsPage";
 import DevicePage from "./pages/DevicePage";
 import HomePage from "./pages/HomePage";
 import FindPage from "./pages/FindPage";
@@ -45,13 +48,16 @@ export default function App() {
     <Routes>
       <Route path="/" element={<Root />} />
       <Route path="/site" element={<LandingPage />} />
+      <Route path="/docs" element={<DocsPage />} />
+      <Route path="/docs/quickstart" element={<QuickstartPage />} />
+      <Route path="/docs/cli" element={<CliDocsPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/device" element={<DevicePage />} />
       <Route element={<Protected />}>
         <Route path="/home" element={<HomePage />} />
         <Route path="/find" element={<FindPage />} />
         <Route path="/library" element={<LibraryPage />} />
-        <Route path="/projects/:id" element={<ProjectPage />} />
+        <Route path="/projects/:slug" element={<ProjectPage />} />
         <Route path="/clis" element={<CliSettingsPage />} />
       </Route>
     </Routes>

@@ -21,11 +21,16 @@ const PAPER_ID = `arxiv:${PAPER}`;
 let workDir: string;
 let configDir: string;
 
-function run(args: string[], cwd: string = workDir): string {
+function run(
+  args: string[],
+  cwd: string = workDir,
+  env?: Record<string, string>,
+): string {
   return execFileSync("node", [distEntry, ...args], {
     cwd,
     encoding: "utf8",
     timeout: 60_000,
+    env: env ? { ...process.env, ...env } : process.env,
   });
 }
 
@@ -94,7 +99,11 @@ describe("CLI end-to-end", () => {
     expect(existsSync(join(pb, "config.json"))).toBe(true);
     expect(existsSync(join(pb, "papers.json"))).toBe(true);
     expect(existsSync(join(pb, "refs.bib"))).toBe(true);
-    expect(existsSync(join(pb, "AGENTS.md"))).toBe(true);
+    expect(existsSync(join(pb, "README.md"))).toBe(true);
+    // The root agent brief is dropped at the repo root, pointing back here.
+    const rootBrief = readFileSync(join(workDir, "AGENTS.md"), "utf-8");
+    expect(rootBrief).toContain("Paper Baker");
+    expect(rootBrief).toContain("paperbaker/README.md");
     // Tex sources go in paperbaker/sources/ — its own nested git repo so the
     // bulky content never pollutes the host repo's history.
     const srcRoot = join(pb, "sources");
@@ -255,7 +264,7 @@ describe("pb project (offline, no network)", () => {
       // No token, no TTY: create is always local and never blocks on auth.
       run(["project", "create", "My Research"], dir);
       const pb = join(dir, "paperbaker");
-      for (const f of ["config.json", "papers.json", "refs.bib", "AGENTS.md"]) {
+      for (const f of ["config.json", "papers.json", "refs.bib", "README.md"]) {
         expect(existsSync(join(pb, f))).toBe(true);
       }
       // Tex sources still get their sealed nested git repo.
@@ -324,6 +333,37 @@ describe("pb project (offline, no network)", () => {
     try {
       const { status } = runFail(["project", "rename", "whatever"], dir);
       expect(status).not.toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Every in-project command attempts a post-action sync. With no credential
+  // that auto-sync must be a silent no-op: it can't pollute stdout (critical for
+  // --json consumers) and must not block or re-touch local files behind a read.
+  it("post-action auto-sync is a silent no-op when offline", () => {
+    const dir = freshDir();
+    try {
+      run(["project", "create", "Quiet"], dir);
+      const out = run(["list", "--json"], dir);
+      expect(() => JSON.parse(out)).not.toThrow();
+      expect(out).not.toMatch(/Sync complete|Regenerated|Synced with server|Published/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // The auto-sync must never promote a local-only project. Even with a credential
+  // present, a routine command on an unbound (no stableId) project leaves it
+  // offline — minting an id + publishing is reserved for an explicit `pb sync`.
+  // (No network is reached: the guard bails before any API call, so a bogus
+  // token is safe here.)
+  it("auto-sync does not convert an offline project to online", () => {
+    const dir = freshDir();
+    try {
+      run(["project", "create", "Stay Local"], dir);
+      run(["list"], dir, { PAPERBAKER_TOKEN: "pbk.bogus-token" });
+      expect(readConfig(dir).stableId).toBeUndefined();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
