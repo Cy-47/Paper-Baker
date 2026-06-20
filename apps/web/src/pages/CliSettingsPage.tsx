@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { TerminalSquare, Trash2, LogIn, Copy, Check } from "lucide-react";
+import { TerminalSquare, Trash2, LogIn } from "lucide-react";
 import { Button, Card, Chip } from "@heroui/react";
 import { useAuth } from "../hooks/useAuth";
+import { InstallCommand } from "../components/InstallCommand";
 import {
   subscribeClis,
   subscribeCliEvents,
@@ -22,29 +23,6 @@ function relativeTime(iso: string): string {
   if (hrs < 24) return `${hrs}h ago`;
   const days = Math.round(hrs / 24);
   return `${days}d ago`;
-}
-
-function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-  const onCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // Clipboard unavailable (e.g. insecure context) — silently no-op.
-    }
-  };
-  return (
-    <button
-      type="button"
-      onClick={onCopy}
-      aria-label={copied ? "Copied" : "Copy command"}
-      className="flex-none rounded-md p-1.5 text-[var(--muted)] transition-colors hover:bg-[var(--background)] hover:text-[var(--foreground)]"
-    >
-      {copied ? <Check size={15} className="text-[var(--success,var(--accent))]" /> : <Copy size={15} />}
-    </button>
-  );
 }
 
 function deviceLabel(d: { hostname?: string; platform?: string }): string {
@@ -109,11 +87,8 @@ export default function CliSettingsPage() {
               <p className="mt-2 text-sm text-[var(--muted)]">
                 Install the Paper Baker CLI:
               </p>
-              <div className="mt-1.5 flex items-center gap-2 rounded-lg bg-[var(--background-secondary)] pl-3 pr-1.5 py-1.5">
-                <pre className="min-w-0 flex-1 overflow-x-auto text-[13px] text-[var(--foreground)]">
-                  <code>curl -LsSf https://paper-baker.web.app/install.sh | sh</code>
-                </pre>
-                <CopyButton text="curl -LsSf https://paper-baker.web.app/install.sh | sh" />
+              <div className="mt-1.5">
+                <InstallCommand size="sm" />
               </div>
               <p className="mt-3 text-sm text-[var(--muted)]">
                 Then run{" "}

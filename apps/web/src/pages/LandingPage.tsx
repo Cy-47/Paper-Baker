@@ -10,7 +10,6 @@ import {
   BookMarked,
   ArrowRight,
   ArrowUpRight,
-  Copy,
   Check,
   Bot,
   Home,
@@ -26,9 +25,9 @@ import {
 } from "lucide-react";
 import { Button, Card } from "@heroui/react";
 import { useAuth } from "../hooks/useAuth";
+import { InstallCommand } from "../components/InstallCommand";
 
 const GITHUB_URL = "https://github.com/Cy-47/Paper-Baker";
-const INSTALL_CMD = "curl -LsSf https://paper-baker.web.app/install.sh | sh";
 
 /** GitHub mark — lucide dropped brand icons, so we inline the official glyph. */
 function Github({ size = 16 }: { size?: number }) {
@@ -42,18 +41,6 @@ function Github({ size = 16 }: { size?: number }) {
 // ---------------------------------------------------------------------------
 // Small building blocks
 // ---------------------------------------------------------------------------
-
-/** Copy-to-clipboard helper that swaps its icon for ~1.5s after a click. */
-function useCopied() {
-  const [copied, setCopied] = useState(false);
-  const copy = (text: string) => {
-    navigator.clipboard?.writeText(text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
-  };
-  return { copied, copy };
-}
 
 /** macOS-style window chrome wrapper used for both previews. */
 function Window({
@@ -557,7 +544,6 @@ function HeroVisual() {
 
 export default function LandingPage() {
   const { user, signIn } = useAuth();
-  const { copied, copy } = useCopied();
 
   const githubButton = (
     <a href={GITHUB_URL} target="_blank" rel="noreferrer" className="no-underline">
@@ -650,17 +636,9 @@ export default function LandingPage() {
               {githubButton}
             </div>
 
-            <button
-              type="button"
-              onClick={() => copy(INSTALL_CMD)}
-              className="group mx-auto mt-5 flex w-full max-w-md items-center gap-3 rounded-lg border border-solid border-[var(--border)] bg-[var(--surface)] px-4 py-2.5 text-left font-mono text-[13px] text-[var(--foreground)] transition-colors hover:border-[var(--accent)]"
-            >
-              <span className="select-none text-[var(--accent)]">$</span>
-              <span className="flex-1 truncate">{INSTALL_CMD}</span>
-              <span className="flex-none text-[var(--muted)] group-hover:text-[var(--accent)]">
-                {copied ? <Check size={15} /> : <Copy size={15} />}
-              </span>
-            </button>
+            <div className="mx-auto mt-5 w-full max-w-md">
+              <InstallCommand size="sm" align="center" />
+            </div>
 
             <HeroVisual />
           </div>
@@ -819,17 +797,9 @@ export default function LandingPage() {
               Then sign in to sync, or use it fully offline. Three commands to first paper.
             </p>
 
-            <button
-              type="button"
-              onClick={() => copy(INSTALL_CMD)}
-              className="group mx-auto mt-8 flex w-full max-w-xl items-center gap-3 rounded-lg border border-solid border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-left font-mono text-sm text-[var(--foreground)] transition-colors hover:border-[var(--accent)]"
-            >
-              <span className="select-none text-[var(--accent)]">$</span>
-              <span className="flex-1 truncate">{INSTALL_CMD}</span>
-              <span className="flex-none text-[var(--muted)] group-hover:text-[var(--accent)]">
-                {copied ? <Check size={16} /> : <Copy size={16} />}
-              </span>
-            </button>
+            <div className="mx-auto mt-8 w-full max-w-xl">
+              <InstallCommand size="md" align="center" />
+            </div>
 
             <div className="mx-auto mt-4 max-w-xl rounded-lg border border-solid border-[var(--border)] bg-[var(--surface)] px-4 py-3 text-left font-mono text-[13px] leading-relaxed text-[var(--muted)]">
               <div>
