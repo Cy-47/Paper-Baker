@@ -9,7 +9,7 @@ export default function LoginPage() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (user) navigate("/", { replace: true });
+    if (user) navigate("/home", { replace: true });
   }, [user, navigate]);
 
   return (
