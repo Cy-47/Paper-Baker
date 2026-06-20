@@ -173,7 +173,9 @@ export async function handleDeviceRequest(
   }
 }
 
-export const deviceApi = onRequest({ cors: true }, handleDeviceRequest);
+// invoker: "public" so Firebase Hosting (and the CLI) can reach the function
+// unauthenticated — app-level auth is enforced in the handler via requireAuth.
+export const deviceApi = onRequest({ cors: true, invoker: "public" }, handleDeviceRequest);
 
 // ---------------------------------------------------------------------------
 // Route handlers

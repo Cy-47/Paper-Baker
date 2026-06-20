@@ -58,7 +58,9 @@ export async function handleLibraryRequest(
   }
 }
 
-export const libraryApi = onRequest({ cors: true }, handleLibraryRequest);
+// invoker: "public" so Hosting can reach it unauthenticated; the handler
+// enforces app-level auth via requireAuth.
+export const libraryApi = onRequest({ cors: true, invoker: "public" }, handleLibraryRequest);
 
 // ---------------------------------------------------------------------------
 // Route handlers

@@ -4,7 +4,11 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "outDir": "dist",
-    "rootDir": "src"
+    // core is bundled by path (see tsup.config.ts), not installed as a package,
+    // so map the import for the typechecker too. rootDir is the repo root so the
+    // mapped core sources count as in-program (tsc only typechecks; tsup emits).
+    "rootDir": "..",
+    "paths": { "@paper-baker/core": ["../packages/core/src/index.ts"] }
   },
   "include": ["src"]
 }
