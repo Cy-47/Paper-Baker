@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { FlaskConical, Check, TerminalSquare } from "lucide-react";
 import { Button, Card, Input } from "@heroui/react";
 import { useAuth } from "../hooks/useAuth";
@@ -9,10 +9,19 @@ type Status = "idle" | "submitting" | "approved" | "error";
 
 export default function DevicePage() {
   const { user, loading, signIn } = useAuth();
+  const navigate = useNavigate();
   const [params] = useSearchParams();
   const [code, setCode] = useState(params.get("code") ?? "");
   const [status, setStatus] = useState<Status>("idle");
   const [error, setError] = useState("");
+
+  // Once the CLI is authorized, send the browser home — the terminal already
+  // has its token, so there's nothing more to do on this page.
+  useEffect(() => {
+    if (status !== "approved") return;
+    const t = setTimeout(() => navigate("/home", { replace: true }), 1500);
+    return () => clearTimeout(t);
+  }, [status, navigate]);
 
   const approve = async () => {
     setStatus("submitting");
@@ -40,7 +49,7 @@ export default function DevicePage() {
 
             {status === "approved" ? (
               <p className="mt-1 text-sm text-[var(--muted)]">
-                You can return to your terminal — the CLI is now signed in.
+                The CLI is now signed in — you can return to your terminal. Taking you home…
               </p>
             ) : loading ? (
               <p className="mt-3 text-sm text-[var(--muted)]">Loading…</p>
