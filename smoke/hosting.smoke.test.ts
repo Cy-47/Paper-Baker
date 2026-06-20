@@ -69,4 +69,16 @@ describe("hosting smoke (rewrites + built functions bundle)", () => {
     expect(res.contentType).toContain("application/json");
     expect(res.body.toLowerCase()).not.toContain("<html");
   });
+
+  it("GET /install.sh serves the CLI installer, not the SPA fallback", async () => {
+    // install.sh is copied into the web build by a Vite plugin so Hosting serves
+    // it at /install.sh (curl … paper-baker.web.app/install.sh | sh). A real
+    // static file must win over the ** -> index.html rewrite — otherwise the
+    // pipe would feed HTML into a shell.
+    const res = await get("/install.sh");
+    expect(res.status).toBe(200);
+    expect(res.body).toMatch(/^#!\/bin\/sh/);
+    expect(res.body).toContain("Paper Baker CLI installer");
+    expect(res.body.toLowerCase()).not.toContain("<html");
+  });
 });
