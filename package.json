@@ -2,6 +2,7 @@
   "name": "paper-baker",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@11.7.0",
   "scripts": {
     "build": "pnpm -r build",
     "dev:web": "cd apps/web && exec ./node_modules/.bin/vite",
