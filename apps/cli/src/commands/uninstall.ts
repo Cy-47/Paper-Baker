@@ -1,18 +1,52 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { Command } from "commander";
 import { getGlobalConfigDir } from "../config.js";
 import { isPackaged, stripEnvLines } from "../helpers/release.js";
 import { isInteractive, promptChoice } from "../helpers/prompt.js";
 
 /**
+ * Remove the install dir from the Windows user PATH (HKCU\Environment), undoing
+ * what install.ps1's SetEnvironmentVariable(..,"User") added. Done via PowerShell
+ * so the same broadcast that install.ps1 triggered fires again — new shells see
+ * the change without a reboot. Best-effort: a failure here shouldn't abort the
+ * uninstall, so the binary still gets removed.
+ */
+function cleanupWindowsPath(installDir: string): void {
+  // Rebuild the user PATH without any segment whose trimmed form equals our dir
+  // (case-insensitive, trailing-slash-insensitive — matching install.ps1).
+  const ps = [
+    "$d = $env:PB_UNINSTALL_DIR;",
+    "$p = [Environment]::GetEnvironmentVariable('Path','User');",
+    "if ($p) {",
+    "  $kept = $p.Split(';') | Where-Object { $_ -and ($_.TrimEnd('\\') -ine $d.TrimEnd('\\')) };",
+    "  [Environment]::SetEnvironmentVariable('Path', ($kept -join ';'), 'User');",
+    "}",
+  ].join(" ");
+  try {
+    execFileSync("powershell", ["-NoProfile", "-NonInteractive", "-Command", ps], {
+      stdio: "ignore",
+      env: { ...process.env, PB_UNINSTALL_DIR: installDir },
+    });
+    console.error("Removed PATH entry from your user environment.");
+  } catch {
+    console.error(`Could not auto-remove ${installDir} from your PATH; remove it by hand if needed.`);
+  }
+}
+
+/**
  * Remove the PATH wiring the installer added: the `. "<dir>/env"` source lines
  * in the shell rc files, the fish drop-in, and the env scripts themselves.
- * Mirrors the file set written by install.sh.
+ * Mirrors the file set written by install.sh. On Windows the wiring lives in the
+ * registry instead, so defer to cleanupWindowsPath.
  */
 function cleanupPath(installDir: string): void {
+  if (process.platform === "win32") {
+    cleanupWindowsPath(installDir);
+    return;
+  }
   const home = os.homedir();
   for (const name of [".profile", ".bashrc", ".zshrc", ".bash_profile"]) {
     const rc = path.join(home, name);

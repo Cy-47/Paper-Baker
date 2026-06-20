@@ -4,20 +4,24 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
-// Copy the repo-root install.sh into the build output so Firebase Hosting serves
-// it at /install.sh — i.e. `curl -LsSf https://paper-baker.web.app/install.sh | sh`.
-// The canonical script stays at the repo root (single source of truth); the
-// "**" -> /index.html rewrite doesn't catch it because Hosting serves real
+// Copy the repo-root installers into the build output so Firebase Hosting serves
+// them at /install.sh and /install.ps1 — i.e.
+//   curl -LsSf https://paper-baker.web.app/install.sh | sh                 (Unix)
+//   irm https://paper-baker.web.app/install.ps1 | iex                      (Windows)
+// The canonical scripts stay at the repo root (single source of truth); the
+// "**" -> /index.html rewrite doesn't catch them because Hosting serves real
 // static files before applying rewrites.
 function copyInstaller() {
   return {
     name: "copy-installer",
     apply: "build" as const,
     writeBundle() {
-      copyFileSync(
-        fileURLToPath(new URL("../../install.sh", import.meta.url)),
-        fileURLToPath(new URL("./dist/install.sh", import.meta.url)),
-      );
+      for (const name of ["install.sh", "install.ps1"]) {
+        copyFileSync(
+          fileURLToPath(new URL(`../../${name}`, import.meta.url)),
+          fileURLToPath(new URL(`./dist/${name}`, import.meta.url)),
+        );
+      }
     },
   };
 }
