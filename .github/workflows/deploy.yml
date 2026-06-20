@@ -1,0 +1,68 @@
+name: Deploy
+
+# Deploys the web app (Hosting), the API (Functions) and Firestore rules/indexes
+# to the `paper-baker` Firebase project.
+#
+# Auth: store a Firebase service-account JSON (with the "Firebase Admin",
+# "Cloud Functions Admin" and "Service Account User" roles) as the
+# FIREBASE_SERVICE_ACCOUNT repository secret. Generate it in the Google Cloud
+# console → IAM → Service Accounts → Keys.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      # Surfaced as an env var so step `if:` conditions can gate on its
+      # presence (secrets can't be referenced directly in `if:`).
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20 # matches the Cloud Functions nodejs20 runtime
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify
+        run: |
+          pnpm typecheck
+          pnpm lint
+          pnpm test
+
+      # Builds every workspace package, including apps/web (-> apps/web/dist,
+      # served by Hosting) and functions (-> functions/dist, the deployed API).
+      - name: Build
+        run: pnpm build
+
+      - name: Skip deploy (no credentials)
+        if: env.FIREBASE_SERVICE_ACCOUNT == ''
+        run: echo "::warning::FIREBASE_SERVICE_ACCOUNT secret not set — built and verified, skipping deploy."
+
+      - name: Authenticate to Firebase
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        run: |
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/sa.json"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/sa.json" >> "$GITHUB_ENV"
+
+      - name: Deploy
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        run: >
+          pnpm exec firebase deploy
+          --only hosting,functions,firestore
+          --project paper-baker
+          --non-interactive
+          --force

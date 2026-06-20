@@ -1,0 +1,37 @@
+{
+  "name": "@paper-baker/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Agent-facing CLI for managing research papers from arXiv",
+  "bin": {
+    "paperbaker": "./dist/index.js",
+    "pb": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "pnpm build",
+    "build:binary": "pnpm build && pkg dist/index.cjs --targets node22-${PB_TARGET:-host} --output binaries/pb",
+    "build:binary:all": "pnpm build && node scripts/build-binaries.mjs"
+  },
+  "dependencies": {
+    "@paper-baker/api-client": "workspace:*",
+    "@paper-baker/core": "workspace:*",
+    "@paper-baker/providers": "workspace:*",
+    "commander": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "@yao-pkg/pkg": "^6.20.0",
+    "tsup": "latest",
+    "tsx": "latest",
+    "typescript": "latest"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

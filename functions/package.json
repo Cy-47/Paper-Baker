@@ -1,0 +1,21 @@
+{
+  "name": "@paper-baker/functions",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup && PATH=\"/opt/homebrew/opt/openjdk/bin:$PATH\" firebase emulators:start --only auth,firestore,functions --project paper-baker",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "firebase-admin": "latest",
+    "firebase-functions": "latest"
+  },
+  "devDependencies": {
+    "@paper-baker/core": "workspace:*",
+    "@types/express": "^4",
+    "tsup": "latest",
+    "typescript": "latest"
+  }
+}
