@@ -1,0 +1,38 @@
+{
+  "name": "paper-baker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev:web": "cd apps/web && exec ./node_modules/.bin/vite",
+    "dev:functions": "pnpm --filter @paper-baker/functions dev",
+    "emulators": "PATH=\"/opt/homebrew/opt/openjdk/bin:$PATH\" firebase emulators:start --only auth,firestore --project paper-baker",
+    "emulators:all": "pnpm --filter @paper-baker/functions build && PATH=\"/opt/homebrew/opt/openjdk/bin:$PATH\" PAPERBAKER_WEB_URL=\"http://localhost:5173\" firebase emulators:start --only auth,firestore,functions,hosting --project paper-baker",
+    "emulators:e2e": "pnpm --filter @paper-baker/functions build && PATH=\"/opt/homebrew/opt/openjdk/bin:$PATH\" firebase emulators:start --config firebase.e2e.json --only auth,firestore,functions --project paper-baker",
+    "seed-cli-token": "node scripts/seed-cli-token.mjs",
+    "lint": "eslint .",
+    "typecheck": "pnpm -r typecheck",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:rules": "PATH=\"/opt/homebrew/opt/openjdk/bin:$PATH\" firebase emulators:exec --only firestore --project paper-baker 'vitest run --config vitest.rules.config.ts'",
+    "test:functions": "PATH=\"/opt/homebrew/opt/openjdk/bin:$PATH\" firebase emulators:exec --only auth,firestore --project paper-baker 'vitest run --config vitest.functions.config.ts'",
+    "test:e2e": "bash scripts/e2e.sh",
+    "test:smoke": "pnpm --filter @paper-baker/functions build && PATH=\"/opt/homebrew/opt/openjdk/bin:$PATH\" PAPERBAKER_WEB_URL=\"http://localhost:5173\" firebase emulators:exec --only auth,firestore,functions,hosting --project paper-baker 'vitest run --config vitest.smoke.config.ts'"
+  },
+  "devDependencies": {
+    "@eslint/js": "latest",
+    "@firebase/rules-unit-testing": "^5.0.1",
+    "@playwright/test": "^1.61.0",
+    "eslint": "latest",
+    "firebase": "^12.15.0",
+    "firebase-tools": "^15.20.0",
+    "globals": "^17.6.0",
+    "typescript-eslint": "latest",
+    "vitest": "^4.1.9"
+  },
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=9"
+  }
+}

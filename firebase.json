@@ -1,0 +1,44 @@
+{
+  "functions": {
+    "source": "functions",
+    "runtime": "nodejs20"
+  },
+  "hosting": {
+    "public": "apps/web/dist",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "rewrites": [
+      { "source": "/api/device", "function": "deviceApi" },
+      { "source": "/api/device/**", "function": "deviceApi" },
+      { "source": "/api/projects", "function": "projectsApi" },
+      { "source": "/api/projects/**", "function": "projectsApi" },
+      { "source": "/api/papers", "function": "papersApi" },
+      { "source": "/api/papers/**", "function": "papersApi" },
+      { "source": "/api/library", "function": "libraryApi" },
+      { "source": "/api/library/**", "function": "libraryApi" },
+      { "source": "**", "destination": "/index.html" }
+    ]
+  },
+  "firestore": {
+    "rules": "firebase/firestore.rules",
+    "indexes": "firebase/firestore.indexes.json"
+  },
+  "emulators": {
+    "auth": {
+      "port": 9099
+    },
+    "firestore": {
+      "port": 8080
+    },
+    "functions": {
+      "port": 5001
+    },
+    "hosting": {
+      "port": 5050
+    },
+    "ui": {
+      "enabled": true,
+      "port": 4000
+    },
+    "singleProjectMode": true
+  }
+}

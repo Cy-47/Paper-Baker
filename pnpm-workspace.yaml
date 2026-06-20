@@ -1,0 +1,12 @@
+packages:
+  - "packages/*"
+  - "apps/*"
+  - "functions"
+allowBuilds:
+  re2: true
+onlyBuiltDependencies:
+  - '@firebase/util'
+  - '@heroui/shared-utils'
+  - esbuild
+  - protobufjs
+  - re2
