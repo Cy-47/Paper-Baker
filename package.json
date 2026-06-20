@@ -5,6 +5,7 @@
   "packageManager": "pnpm@9.15.9",
   "scripts": {
     "build": "pnpm -r build",
+    "deploy": "pnpm build && firebase deploy --project paper-baker",
     "dev:web": "cd apps/web && exec ./node_modules/.bin/vite",
     "dev:functions": "pnpm --filter @paper-baker/functions dev",
     "emulators": "PATH=\"/opt/homebrew/opt/openjdk/bin:$PATH\" firebase emulators:start --only auth,firestore --project paper-baker",
