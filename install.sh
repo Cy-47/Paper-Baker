@@ -51,10 +51,16 @@ mkdir -p "$INSTALL_DIR"
 tmp="$(mktemp)"
 sum_tmp="$(mktemp)"
 
-# fetch <url> <out>: download with curl or wget, nonzero exit on HTTP failure.
+# fetch <url> <out> [progress]: download with curl or wget; nonzero exit on HTTP
+# failure. Pass "progress" to show a single-line bar (for the big binary);
+# otherwise download silently — curl's default meter is a noisy column dump.
 fetch() {
   if command -v curl >/dev/null 2>&1; then
-    curl -fSL "$1" -o "$2"
+    if [ "${3:-}" = "progress" ]; then
+      curl -fSL --progress-bar "$1" -o "$2"
+    else
+      curl -fsSL "$1" -o "$2"
+    fi
   elif command -v wget >/dev/null 2>&1; then
     wget -qO "$2" "$1"
   else
@@ -63,7 +69,7 @@ fetch() {
   fi
 }
 
-fetch "$url" "$tmp"
+fetch "$url" "$tmp" progress
 
 # --- verify checksum -------------------------------------------------------
 # Each release publishes <asset>.sha256 alongside the binary. Verify when both
