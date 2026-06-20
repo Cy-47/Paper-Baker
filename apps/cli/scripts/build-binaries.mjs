@@ -26,7 +26,20 @@ for (const [pkgOs, pkgArch, os, arch, ext] of TARGETS) {
   console.log(`\n▶ Building ${output}  (${target})`);
   execFileSync(
     "pkg",
-    ["dist/index.cjs", "--targets", target, "--output", output],
+    [
+      "dist/index.cjs",
+      "--targets",
+      target,
+      // Cross-architecture targets (e.g. arm64 from an x64 runner) can't have
+      // V8 bytecode generated — pkg would need to execute a Node of the foreign
+      // arch, which fails with "no source or bytecode" at runtime. --no-bytecode
+      // embeds the JS source instead, so every target builds on one x64 runner.
+      // --public silences the accompanying "not public" warnings.
+      "--no-bytecode",
+      "--public",
+      "--output",
+      output,
+    ],
     { stdio: "inherit", shell: true }
   );
 }

@@ -27,6 +27,21 @@ jobs:
       - name: Build cross-platform binaries
         run: pnpm --filter @paper-baker/cli build:binary:all
 
+      # The macOS binaries are cross-built on Linux, so they're unsigned — and
+      # Apple Silicon kills unsigned arm64 code on launch. rcodesign ad-hoc signs
+      # Mach-O binaries on Linux (codesign is macOS-only), making them launchable.
+      - name: Ad-hoc sign macOS binaries
+        run: |
+          RC_VER=0.29.0
+          curl -fsSL -o /tmp/rc.tar.gz \
+            "https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign/${RC_VER}/apple-codesign-${RC_VER}-x86_64-unknown-linux-musl.tar.gz"
+          tar -xzf /tmp/rc.tar.gz -C /tmp
+          RC="$(find /tmp -name rcodesign -type f | head -1)"
+          for b in apps/cli/binaries/pb-darwin-arm64 apps/cli/binaries/pb-darwin-x64; do
+            echo "Signing $b"
+            "$RC" sign "$b"
+          done
+
       - name: Upload binaries to release
         uses: softprops/action-gh-release@v2
         with:
