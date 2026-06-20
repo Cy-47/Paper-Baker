@@ -34,7 +34,7 @@ export interface GlobalConfig {
   uid?: string;
 }
 
-function getGlobalConfigDir(): string {
+export function getGlobalConfigDir(): string {
   const override = process.env["PAPERBAKER_CONFIG_DIR"];
   if (override) return override;
 
