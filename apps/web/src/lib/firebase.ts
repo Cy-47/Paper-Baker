@@ -26,7 +26,13 @@ export const db = initializeFirestore(app, {
 
 // In local dev, point the SDK at the Firebase emulators instead of the cloud
 // project. Set VITE_USE_EMULATOR=true in apps/web/.env to enable.
-if (import.meta.env.VITE_USE_EMULATOR === "true") {
+//
+// The `import.meta.env.DEV` guard is load-bearing: it's statically `false` in a
+// production `vite build`, so Rollup dead-code-eliminates this whole block. That
+// makes it impossible for the emulator flag (or a stray VITE_USE_EMULATOR=true
+// in a build env) to leak into a deployed bundle and point real users at
+// localhost. The dev server and e2e (both `vite`, DEV=true) are unaffected.
+if (import.meta.env.DEV && import.meta.env.VITE_USE_EMULATOR === "true") {
   // Ports default to the standard emulator (pnpm emulators). The e2e suite runs
   // a second, isolated emulator on offset ports and overrides these via env
   // (see playwright.config.ts) so it never collides with a running dev one.
