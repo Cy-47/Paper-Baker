@@ -6,7 +6,7 @@
 # (Fallback before the web app is deployed:
 #   curl -LsSf https://raw.githubusercontent.com/Cy-47/Paper-Baker/main/install.sh | sh )
 #
-# Downloads a self-contained `pb` binary (no Node required) for your platform
+# Downloads a self-contained `pb` binary for your platform
 # from GitHub Releases and installs it into ~/.local/bin.
 #
 # Environment overrides:

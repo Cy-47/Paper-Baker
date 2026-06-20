@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import ErrorBoundary from "./ErrorBoundary";
 import {
@@ -16,6 +16,7 @@ import {
   FileText,
   Folder,
   TerminalSquare,
+  BookOpen,
 } from "lucide-react";
 import { Button, Input } from "@heroui/react";
 import { useAuth } from "../hooks/useAuth";
@@ -70,13 +71,21 @@ export default function AppShell() {
     navigate(`/find${q.trim() ? `?q=${encodeURIComponent(q.trim())}` : ""}`);
   };
 
+  // Guards against a double create when blur fires right after Enter (or vice
+  // versa) while the first request is still in flight.
+  const creatingProject = useRef(false);
   const addProject = async () => {
     const name = newName.trim();
-    if (!name) return;
-    const id = await createProject(name);
-    setNewName("");
-    setCreating(false);
-    navigate(`/projects/${id}`);
+    if (!name || creatingProject.current) return;
+    creatingProject.current = true;
+    try {
+      const project = await createProject(name);
+      setNewName("");
+      setCreating(false);
+      navigate(`/projects/${project.slug}`);
+    } finally {
+      creatingProject.current = false;
+    }
   };
 
   const sidebarNav = (
@@ -92,6 +101,9 @@ export default function AppShell() {
       </NavLink>
       <NavLink to="/clis" className={navClass}>
         <TerminalSquare size={17} /> CLIs
+      </NavLink>
+      <NavLink to="/docs" className={navClass}>
+        <BookOpen size={17} /> Docs
       </NavLink>
 
       <div className="mt-4 flex items-center justify-between px-2.5">
@@ -120,7 +132,7 @@ export default function AppShell() {
             if (e.key === "Enter") addProject();
             if (e.key === "Escape") setCreating(false);
           }}
-          onBlur={() => !newName && setCreating(false)}
+          onBlur={() => (newName.trim() ? addProject() : setCreating(false))}
         />
       )}
 
@@ -128,7 +140,7 @@ export default function AppShell() {
         <p className="px-2.5 py-1 text-xs text-[var(--muted)]">No projects yet</p>
       )}
       {projects.map((p) => (
-        <NavLink key={p.projectId} to={`/projects/${p.projectId}`} className={navClass}>
+        <NavLink key={p.projectId} to={`/projects/${p.slug}`} className={navClass}>
           <span className="flex-1 truncate">{p.name}</span>
           <span className="text-[11px] text-[var(--muted)]">{countFor(p.projectId)}</span>
         </NavLink>

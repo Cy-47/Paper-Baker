@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { Plus, BookOpenText, ArrowUpRight, FolderMinus, Pencil } from "lucide-react";
+import { Plus, BookOpenText, ArrowUpRight, FolderMinus, Pencil, Copy, Check } from "lucide-react";
 import { Button } from "@heroui/react";
 import { useData } from "../hooks/useData";
 import { removePaperFromProject, renameProject } from "../lib/library";
@@ -12,14 +12,25 @@ const iconLink =
   "inline-flex h-8 w-8 items-center justify-center rounded-md text-[var(--muted)] no-underline hover:bg-[var(--background-secondary)] hover:text-[var(--accent)]";
 
 export default function ProjectPage() {
-  const { id = "" } = useParams();
+  const { slug = "" } = useParams();
   const { projects, papersIn, loading } = useData();
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
+  const [copied, setCopied] = useState(false);
 
-  const project = projects.find((p) => p.projectId === id);
+  const project = projects.find((p) => p.slug === slug);
+  // Papers are filed against the stable projectId, not the URL slug.
+  const id = project?.projectId ?? "";
   const papers = papersIn(id);
+
+  const bindCmd = project ? `pb project bind ${project.slug}` : "";
+  const copyBindCmd = () => {
+    navigator.clipboard?.writeText(bindCmd).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
 
   const startRename = () => {
     setDraft(project?.name ?? "");
@@ -88,6 +99,19 @@ export default function ProjectPage() {
           <p className="mt-1 text-xs text-[var(--muted)]">
             {papers.length} {papers.length === 1 ? "paper" : "papers"}
           </p>
+          <button
+            type="button"
+            onClick={copyBindCmd}
+            aria-label="Copy bind command"
+            title="Bind a local directory to this project"
+            className="group mt-3 inline-flex items-center gap-2 rounded-lg border border-solid border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-left font-mono text-[13px] text-[var(--foreground)] transition-colors hover:border-[var(--accent)]"
+          >
+            <span className="select-none text-[var(--accent)]">$</span>
+            <span className="truncate">{bindCmd}</span>
+            <span className="flex-none text-[var(--muted)] group-hover:text-[var(--accent)]">
+              {copied ? <Check size={14} /> : <Copy size={14} />}
+            </span>
+          </button>
         </div>
         <Button variant="primary" className="flex-none" onPress={() => setAdding(true)}>
           <Plus size={15} /> Add paper

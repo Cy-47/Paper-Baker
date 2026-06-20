@@ -1,8 +1,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
-import type { PaperMetadata } from "@paper-baker/core";
+import { type PaperMetadata, sourceDirName } from "@paper-baker/core";
 import { PROJECT_DIR, getProjectDir } from "../config.js";
+
+// `sourceDirName` is defined in core (shared with the generated README); re-export
+// it so existing `./sources.js` importers keep working.
+export { sourceDirName };
 
 // ---------------------------------------------------------------------------
 // Tex sources live in `paperbaker/sources/` — inside the VISIBLE project dir
@@ -27,12 +31,6 @@ export const SOURCES_REL = `${PROJECT_DIR}/${SOURCES_SUBDIR}`;
 
 export function getSourcesRoot(cwd?: string): string {
   return path.join(getProjectDir(cwd), SOURCES_SUBDIR);
-}
-
-export function sourceDirName(paper: PaperMetadata): string {
-  return paper.source.type === "arxiv"
-    ? `arxiv-${paper.source.id}`
-    : paper.paperId.replace(":", "-");
 }
 
 export function getSourceDir(paper: PaperMetadata, cwd?: string): string {

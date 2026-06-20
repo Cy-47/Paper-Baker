@@ -5,7 +5,7 @@
 # (Fallback before the web app is deployed:
 #   irm https://raw.githubusercontent.com/Cy-47/Paper-Baker/main/install.ps1 | iex )
 #
-# Downloads a self-contained `pb.exe` (no Node required) from GitHub Releases and
+# Downloads a self-contained `pb.exe` from GitHub Releases and
 # installs it into %USERPROFILE%\.local\bin. Per-user only: never needs admin —
 # it writes your home dir and the HKCU (current-user) PATH, not system locations.
 #

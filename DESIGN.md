@@ -277,11 +277,12 @@ so the binding survives renames *and* re-homing. Binding happens via the `pb pro
 (§5.2.1), which replaces the old single `init`.
 
 ```
+AGENTS.md                # root brief: a short, marked block pointing here  ← COMMIT
 paperbaker/              # ONE visible dir — everything is searchable
-├── config.json      # { name, stableId?, slug? }   (stableId absent ⇒ offline)
+├── config.json      # { name, stableId?, slug?, rootBrief? }   (stableId absent ⇒ offline)
 ├── papers.json      # lockfile: paper list + cached metadata        ← COMMIT
 ├── refs.bib         # generated BibTeX bibliography                  ← COMMIT
-├── AGENTS.md        # generated guide: what's here, how to read it   ← COMMIT
+├── README.md        # generated guide: what's here, how to read it   ← COMMIT
 └── sources/             # nested git repo (sealed); tex per paper, NOT in host history
     └── arxiv-2301.12345/
         ├── main.tex          # flagged main file
@@ -291,8 +292,16 @@ paperbaker/              # ONE visible dir — everything is searchable
 
 **Why one visible `paperbaker/` and not a hidden dot-dir:** coding-agent search tools are built on
 ripgrep, which skips both hidden (dot-prefixed) directories and gitignored paths. To let an agent
-grep the paper text *and* the metadata (`papers.json`, `refs.bib`, `AGENTS.md`), none of it can be
+grep the paper text *and* the metadata (`papers.json`, `refs.bib`, `README.md`), none of it can be
 hidden or ignored. So the whole project lives in a visible `paperbaker/`, never added to `.gitignore`.
+
+**Why a root brief, not just `paperbaker/README.md`:** the `AGENTS.md`/`CLAUDE.md` convention
+prioritizes the file at the *repo root*; a guide nested in `paperbaker/` is found by search but not
+auto-loaded. So `pb project create`/`bind` injects a short, marked block (`<!-- BEGIN/END PAPER
+BAKER -->`) into the root agent file — appending to an existing `AGENTS.md`/`CLAUDE.md`, else creating
+`AGENTS.md`. It's a one-time decision recorded in `config.json` (`rootBrief: "added" | "declined"`) so
+hand-deleting the block doesn't make us re-add it; `--no-brief` opts out, and outside a TTY it injects
+silently. The full per-project index stays in `paperbaker/README.md`, which the brief links to.
 
 **Keeping the bulky tex out of the host repo's history:** `paperbaker/sources/` is its own nested git
 repo. That nested `.git` "seals" the subdirectory — a `git add -A` in the host repo can stage at most
@@ -369,8 +378,8 @@ pb context                 concatenated tex + figure list (the "simpler" form, �
 - **Eager mirror, explicit reconcile:** while a project is synced, `add`/`remove` mirror to the
   server immediately; `pb sync` is the catch-up that publishes a still-local project, pulls server
   changes, and re-downloads missing sources.
-- **Why agents love this layout:** reading needs no CLI at all. An agent reads `paperbaker/AGENTS.md`
-  to learn the corpus, then opens `paperbaker/sources/<id>/main.tex` directly. The CLI is for *mutation*
+- **Why agents love this layout:** reading needs no CLI at all. The root brief points an agent at
+  `paperbaker/README.md` to learn the corpus, then it opens `paperbaker/sources/<id>/main.tex` directly. The CLI is for *mutation*
   (add/remove/sync) and for *agent-optimized reads* (`read`, `context`). Predictable paths + `--json`
   = no scraping.
 

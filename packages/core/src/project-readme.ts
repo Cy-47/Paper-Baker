@@ -1,10 +1,29 @@
-import * as fs from "node:fs";
-import * as path from "node:path";
-import type { PaperMetadata } from "@paper-baker/core";
-import { PROJECT_DIR, getProjectDir } from "../config.js";
-import { SOURCES_REL, sourceDirName } from "./sources.js";
+import type { PaperMetadata } from "./types.js";
 
-export function generateAgentsMd(papers: PaperMetadata[]): string {
+// The `paperbaker/README.md` guide the CLI generates and keeps up to date — the
+// full, human/agent-readable index of a project's papers (the root brief in
+// agent-brief.ts is the short pointer that links here). It lives in core so the
+// CLI (which WRITES it) and the web docs page (which PREVIEWS it) render the
+// exact same thing.
+
+// Layout of the visible project dir. Private to this module — the CLI has its
+// own copies in config.ts / helpers/sources.ts for filesystem work; these exist
+// only so the generated text is correct.
+const PROJECT_DIR = "paperbaker";
+const SOURCES_REL = `${PROJECT_DIR}/sources`;
+
+/** Filename of the full per-project guide, inside the visible paperbaker/ dir. */
+export const PROJECT_README = "README.md";
+
+/** Directory name a paper's tex source is extracted into, under sources/. */
+export function sourceDirName(paper: PaperMetadata): string {
+  return paper.source.type === "arxiv"
+    ? `arxiv-${paper.source.id}`
+    : paper.paperId.replace(":", "-");
+}
+
+/** The `paperbaker/README.md` guide rendered from a project's papers. */
+export function generateProjectReadme(papers: PaperMetadata[]): string {
   // Paths are written relative to the PROJECT ROOT, so they're correct no matter
   // where an agent reads from. Everything lives in the visible `paperbaker/` dir;
   // the tex sources are the searchable `paperbaker/sources/`.
@@ -44,13 +63,4 @@ export function generateAgentsMd(papers: PaperMetadata[]): string {
   }
 
   return lines.join("\n");
-}
-
-/**
- * Write AGENTS.md to the (visible) project dir. It sits alongside the metadata
- * and the tex it describes, so coding agents discover the reading guide via
- * search — no separate copy needed.
- */
-export function writeAgentsMd(papers: PaperMetadata[], cwd?: string): void {
-  fs.writeFileSync(path.join(getProjectDir(cwd), "AGENTS.md"), generateAgentsMd(papers));
 }

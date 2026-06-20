@@ -199,11 +199,13 @@ async function handleCreateProject(uid: string, req: Request, res: Response) {
       if (s) slugs.add(s);
     });
 
-    const slug = uniqueSlug(slugify(name), slugs);
     let id = generateProjectId();
     for (let guard = 0; ids.has(id) && guard < 50; guard++) {
       id = generateProjectId();
     }
+    // Fall back to the (clean, typeable) stable id when the name has nothing
+    // slug-able — e.g. an all-emoji name — rather than a colliding "untitled".
+    const slug = uniqueSlug(slugify(name) || id, slugs);
 
     const p: Project = {
       projectId: id,
@@ -267,7 +269,7 @@ async function handleUpsertProject(
 
     const p: Project = {
       projectId: id,
-      slug: uniqueSlug(slugify(name), slugs),
+      slug: uniqueSlug(slugify(name) || id, slugs),
       name,
       description: description ?? "",
       ownerUid: uid,
@@ -340,7 +342,7 @@ async function handleUpdateProject(
         const s = (d.data() as Project).slug;
         if (s) slugs.add(s);
       });
-      updates.slug = uniqueSlug(slugify(name), slugs);
+      updates.slug = uniqueSlug(slugify(name) || ref.id, slugs);
     }
 
     tx.update(ref, updates);

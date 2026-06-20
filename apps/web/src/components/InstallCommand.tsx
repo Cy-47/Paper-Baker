@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Copy, Check } from "lucide-react";
+import { CommandBlock } from "./CommandBlock";
 
 // One-line installers, served from Firebase Hosting (see repo-root install.sh /
 // install.ps1, bundled into the web build by the copy-installer Vite plugin).
@@ -34,19 +34,7 @@ export function InstallCommand({
   align?: "start" | "center";
 }) {
   const [os, setOs] = useState<OsKey>(detectOs);
-  const [copied, setCopied] = useState(false);
   const cmd = INSTALL_COMMANDS[os];
-
-  const onCopy = () => {
-    navigator.clipboard?.writeText(cmd).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
-  };
-
-  const text = size === "sm" ? "text-[13px]" : "text-sm";
-  const pad = size === "sm" ? "px-4 py-2.5" : "px-4 py-3";
-  const icon = size === "sm" ? 15 : 16;
 
   return (
     <div className="w-full">
@@ -63,10 +51,7 @@ export function InstallCommand({
               type="button"
               role="tab"
               aria-selected={active}
-              onClick={() => {
-                setOs(t.key);
-                setCopied(false);
-              }}
+              onClick={() => setOs(t.key)}
               className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                 active
                   ? "bg-[var(--accent-soft)] text-[var(--accent-soft-foreground)]"
@@ -79,18 +64,14 @@ export function InstallCommand({
         })}
       </div>
 
-      <button
-        type="button"
-        onClick={onCopy}
-        aria-label="Copy install command"
-        className={`group mt-1.5 flex w-full items-center gap-3 rounded-lg border border-solid border-[var(--border)] bg-[var(--surface)] text-left font-mono ${text} ${pad} text-[var(--foreground)] transition-colors hover:border-[var(--accent)]`}
-      >
-        <span className="select-none text-[var(--accent)]">{os === "windows" ? ">" : "$"}</span>
-        <span className="flex-1 truncate">{cmd}</span>
-        <span className="flex-none text-[var(--muted)] group-hover:text-[var(--accent)]">
-          {copied ? <Check size={icon} /> : <Copy size={icon} />}
-        </span>
-      </button>
+      <CommandBlock
+        key={os}
+        lines={[cmd]}
+        prompt={os === "windows" ? ">" : "$"}
+        size={size}
+        truncate
+        className="mt-1.5"
+      />
     </div>
   );
 }

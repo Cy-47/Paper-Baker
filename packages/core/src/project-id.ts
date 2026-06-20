@@ -15,20 +15,30 @@
 /** Max slug length — keeps URLs and ids sane without being restrictive. */
 export const SLUG_MAX_LENGTH = 64;
 
-/** Fallback slug base when a name yields nothing slug-able (e.g. all CJK/emoji). */
+/** Fallback slug base when a name yields nothing slug-able (e.g. all emoji). */
 export const DEFAULT_SLUG = "untitled";
 
 /**
- * Turn a human name into a URL-safe slug: lowercase ASCII words joined by single
- * hyphens. Returns "" when nothing slug-able remains — callers pair this with
- * {@link uniqueSlug}, which substitutes {@link DEFAULT_SLUG}.
+ * Turn a human name into a URL-safe slug: lowercased, with runs of punctuation
+ * and whitespace collapsed to single hyphens.
+ *
+ * Latin accents are folded to ASCII (café → cafe), but letters and digits from
+ * any script are kept rather than stripped (机器学习 → 机器学习). Transliterating
+ * CJK to pinyin is lossy — homophones collide and polyphonic characters get the
+ * wrong reading — so a faithful Unicode slug is both safer and more meaningful;
+ * it's valid in URLs (percent-encoded on the wire) and Firestore handles it fine.
+ *
+ * Returns "" only when nothing slug-able remains (e.g. an all-emoji or
+ * all-punctuation name); callers pair this with a fallback — the stable project
+ * id at the call sites, or {@link DEFAULT_SLUG} via {@link uniqueSlug}.
  */
 export function slugify(name: string): string {
   return name
     .normalize("NFKD") // split accented letters into base char + combining mark
     .replace(/\p{Diacritic}/gu, "") // drop the combining marks → ASCII base
+    .normalize("NFC") // recompose what's left (e.g. decomposed Hangul jamo)
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-") // any run of non-alphanumerics → one hyphen
+    .replace(/[^\p{Letter}\p{Number}]+/gu, "-") // non-alphanumeric runs → one hyphen
     .replace(/^-+|-+$/g, "") // trim leading/trailing hyphens
     .slice(0, SLUG_MAX_LENGTH)
     .replace(/-+$/g, ""); // re-trim in case the slice landed on a hyphen

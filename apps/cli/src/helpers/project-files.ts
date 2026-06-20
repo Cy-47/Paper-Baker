@@ -3,7 +3,7 @@ import * as path from "node:path";
 import type { PaperMetadata } from "@paper-baker/core";
 import { renderBibtexFile } from "@paper-baker/core";
 import { getProjectDir } from "../config.js";
-import { writeAgentsMd } from "./agents-md.js";
+import { writeProjectReadme } from "./project-readme.js";
 import { ensureSourcesRepo } from "./sources.js";
 
 // ---------------------------------------------------------------------------
@@ -36,7 +36,7 @@ export function savePapers(papers: PaperMetadata[], cwd?: string): void {
 
 /**
  * Create the visible `paperbaker/` scaffold: the dir, the sealed `sources/`
- * nested git repo, and empty papers.json / refs.bib / AGENTS.md. Does NOT touch
+ * nested git repo, and empty papers.json / refs.bib / README.md. Does NOT touch
  * config.json — the caller writes that with the right project id.
  */
 export function scaffoldProjectFiles(cwd?: string): string {
@@ -45,15 +45,15 @@ export function scaffoldProjectFiles(cwd?: string): string {
   ensureSourcesRepo(cwd);
   savePapers([], cwd);
   fs.writeFileSync(path.join(projectDir, "refs.bib"), "");
-  writeAgentsMd([], cwd);
+  writeProjectReadme([], cwd);
   return projectDir;
 }
 
-/** Regenerate the derived files (refs.bib, AGENTS.md) from the paper list. */
+/** Regenerate the derived files (refs.bib, README.md) from the paper list. */
 export function rebuildArtifacts(papers: PaperMetadata[], cwd?: string): void {
   fs.writeFileSync(
     path.join(getProjectDir(cwd), "refs.bib"),
     renderBibtexFile(papers),
   );
-  writeAgentsMd(papers, cwd);
+  writeProjectReadme(papers, cwd);
 }

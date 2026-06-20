@@ -573,12 +573,19 @@ export default function LandingPage() {
       {/* ---------- nav ---------- */}
       <header className="sticky top-0 z-20 border-b border-solid border-[var(--border)] bg-[var(--background)]/80 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6">
-          <span className="flex items-center gap-2 font-medium text-[var(--foreground)]">
-            <span className="flex h-7 w-7 items-center justify-center rounded-md bg-[var(--accent)] text-[var(--accent-foreground)]">
-              <FlaskConical size={16} />
+          <div className="flex items-center gap-3 sm:gap-5">
+            <span className="flex items-center gap-2 font-medium text-[var(--foreground)]">
+              <span className="flex h-7 w-7 items-center justify-center rounded-md bg-[var(--accent)] text-[var(--accent-foreground)]">
+                <FlaskConical size={16} />
+              </span>
+              Paper Baker
             </span>
-            Paper Baker
-          </span>
+            <Link to="/docs" className="no-underline">
+              <Button variant="ghost" size="sm">
+                Docs
+              </Button>
+            </Link>
+          </div>
           <div className="flex items-center gap-2">
             {githubButton}
             {user ? (
@@ -836,6 +843,9 @@ export default function LandingPage() {
             <FlaskConical size={13} /> Paper Baker — Agent native reference manager
           </span>
           <div className="flex items-center gap-4">
+            <Link to="/docs" className="text-[var(--muted)] no-underline hover:text-[var(--accent)]">
+              Docs
+            </Link>
             <a
               href={GITHUB_URL}
               target="_blank"

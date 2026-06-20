@@ -64,8 +64,8 @@ function Panel({ paper, onClose }: { paper: PaperMetadata; onClose: () => void }
     if (!name) return;
     setAdding(true);
     try {
-      const id = await createProject(name);
-      await addPaperToProject(id, paper);
+      const project = await createProject(name);
+      await addPaperToProject(project.projectId, paper);
       setNewName("");
     } finally {
       setAdding(false);

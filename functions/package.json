@@ -5,7 +5,7 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsup",
-    "dev": "tsup && PATH=\"/opt/homebrew/opt/openjdk/bin:$PATH\" firebase emulators:start --only auth,firestore,functions --project paper-baker",
+    "dev": "tsup && (tsup --watch & TSUP_PID=$!; trap 'kill $TSUP_PID 2>/dev/null' EXIT; PATH=\"/opt/homebrew/opt/openjdk/bin:$PATH\" firebase emulators:start --only auth,firestore,functions --project paper-baker)",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
