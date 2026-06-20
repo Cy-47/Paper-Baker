@@ -10,7 +10,7 @@ export function registerLoginCommands(program: Command): void {
   program
     .command("login")
     .description("Sign in through your browser (device link)")
-    .option("--no-open", "Do not try to open the browser automatically")
+    .option("--open", "Open the verification URL in your browser automatically")
     .action(async (opts: { open?: boolean }) => {
       // Idempotent re-auth: tell the user they're replacing an existing session
       // (non-blocking — no prompt, since this CLI is driven by agents too).
@@ -22,7 +22,7 @@ export function registerLoginCommands(program: Command): void {
       }
       try {
         const { uid } = await deviceLogin({
-          openBrowser: opts.open !== false && !!process.stdout.isTTY,
+          openBrowser: opts.open === true && !!process.stdout.isTTY,
         });
         console.log(`Signed in (uid: ${uid}).`);
         // A set PAPERBAKER_TOKEN silently overrides the token we just stored
