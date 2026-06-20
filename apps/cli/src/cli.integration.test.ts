@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname, sep } from "node:path";
@@ -327,5 +327,44 @@ describe("pb project (offline, no network)", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+// update/uninstall only act on the standalone pkg binary. Run through `node`
+// (not packaged), so the guard must fire: print guidance and touch NOTHING.
+// The safety-critical assertion is that `pb uninstall` never deletes the Node
+// binary it's running under (process.execPath would be Node here).
+describe("pb update / uninstall (non-packaged guards)", () => {
+  function capture(args: string[]): { status: number | null; out: string } {
+    const r = spawnSync("node", [distEntry, ...args], {
+      cwd: workDir,
+      encoding: "utf8",
+      timeout: 60_000,
+    });
+    return { status: r.status, out: `${r.stdout}${r.stderr}` };
+  }
+
+  it("update on a non-binary install exits 0 with guidance, changes nothing", () => {
+    const { status, out } = capture(["update"]);
+    expect(status).toBe(0);
+    expect(out).toMatch(/npm install -g @paper-baker\/cli/);
+    // It must not have tried to reach GitHub or report a version swap.
+    expect(out).not.toMatch(/Updating|Updated to/);
+  });
+
+  it("uninstall on a non-binary install refuses and never deletes node", () => {
+    expect(existsSync(process.execPath)).toBe(true); // the node running this test
+    const { status, out } = capture(["uninstall", "--purge"]);
+    expect(status).toBe(0);
+    expect(out).toMatch(/npm uninstall -g @paper-baker\/cli/);
+    expect(out).not.toMatch(/Uninstalled pb|Removed/);
+    // The guard's whole point: Node is untouched even with --purge.
+    expect(existsSync(process.execPath)).toBe(true);
+  });
+
+  it("--version reports the package.json version, not a dev sentinel", () => {
+    const { status, out } = capture(["--version"]);
+    expect(status).toBe(0);
+    expect(out.trim()).toMatch(/^\d+\.\d+\.\d+$/);
   });
 });

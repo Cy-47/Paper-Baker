@@ -2,23 +2,33 @@
 
 import { Command } from "commander";
 import { loadGlobalConfig } from "./config.js";
+import { VERSION } from "./version.js";
 import { registerLoginCommands } from "./commands/login.js";
 import { registerProjectCommands } from "./commands/project.js";
 import { registerPaperCommands } from "./commands/papers.js";
 import { registerReadCommands } from "./commands/read.js";
 import { registerSyncCommand } from "./commands/sync.js";
+import { registerUpdateCommand } from "./commands/update.js";
+import { registerUninstallCommand } from "./commands/uninstall.js";
 
 const program = new Command();
 
 program
   .name("pb")
   .description("AI-agent-facing CLI for managing research papers")
-  .version("0.1.0");
+  .version(VERSION);
 
 // Login is optional — every command works locally without an account. When not
 // signed in, print a one-line nudge to stderr (so it never pollutes --json on
 // stdout). Auth-management commands are exempt; PAPERBAKER_QUIET silences it.
-const AUTH_COMMANDS = new Set(["login", "logout", "whoami", "help"]);
+const AUTH_COMMANDS = new Set([
+  "login",
+  "logout",
+  "whoami",
+  "help",
+  "update",
+  "uninstall",
+]);
 program.hook("preAction", (_thisCommand, actionCommand) => {
   if (AUTH_COMMANDS.has(actionCommand.name())) return;
   if (process.env["PAPERBAKER_QUIET"] || process.env["PAPERBAKER_TOKEN"]) return;
@@ -34,6 +44,8 @@ registerProjectCommands(program);
 registerPaperCommands(program);
 registerReadCommands(program);
 registerSyncCommand(program);
+registerUpdateCommand(program);
+registerUninstallCommand(program);
 
 // Run async actions and turn any uncaught error (e.g. a backend API failure like
 // a revoked token, or a network error) into a clean one-line message + exit 1,
