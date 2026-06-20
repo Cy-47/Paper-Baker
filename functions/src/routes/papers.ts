@@ -82,7 +82,9 @@ export function sendRateLimited(res: Response, err: unknown): boolean {
   return false;
 }
 
-export const papersApi = onRequest({ cors: true }, handlePapersRequest);
+// invoker: "public" so Hosting can reach it unauthenticated; the handler
+// enforces app-level auth via requireAuth.
+export const papersApi = onRequest({ cors: true, invoker: "public" }, handlePapersRequest);
 
 // ---------------------------------------------------------------------------
 // Route handlers

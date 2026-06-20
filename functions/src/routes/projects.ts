@@ -164,7 +164,9 @@ export async function handleProjectsRequest(
   }
 }
 
-export const projectsApi = onRequest({ cors: true }, handleProjectsRequest);
+// invoker: "public" so Hosting can reach it unauthenticated; the handler
+// enforces app-level auth via requireAuth.
+export const projectsApi = onRequest({ cors: true, invoker: "public" }, handleProjectsRequest);
 
 // ---------------------------------------------------------------------------
 // Route handlers
