@@ -42,6 +42,17 @@ jobs:
             "$RC" sign "$b"
           done
 
+      # Checksums MUST be generated after signing — signing rewrites the Mach-O,
+      # so a pre-signing hash wouldn't match the uploaded artifact. install.sh
+      # downloads <asset>.sha256 and verifies before installing.
+      - name: Generate checksums
+        run: |
+          cd apps/cli/binaries
+          for f in pb-*; do
+            case "$f" in *.sha256) continue ;; esac
+            sha256sum "$f" > "$f.sha256"
+          done
+
       - name: Upload binaries to release
         uses: softprops/action-gh-release@v2
         with:
