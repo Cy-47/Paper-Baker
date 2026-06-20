@@ -31,7 +31,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20 # matches the Cloud Functions nodejs20 runtime
+          node-version: 22 # matches the Cloud Functions nodejs22 runtime
           cache: pnpm
 
       - name: Install dependencies
