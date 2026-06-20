@@ -81,7 +81,7 @@ export default function AppShell() {
 
   const sidebarNav = (
     <>
-      <NavLink to="/" end className={navClass}>
+      <NavLink to="/home" end className={navClass}>
         <Home size={17} /> Home
       </NavLink>
       <NavLink to="/find" className={navClass}>
@@ -171,7 +171,7 @@ export default function AppShell() {
           <Menu size={18} />
         </Button>
 
-        <NavLink to="/" className="flex flex-none items-center gap-2 no-underline">
+        <NavLink to="/home" className="flex flex-none items-center gap-2 no-underline">
           <span className="flex h-7 w-7 items-center justify-center rounded-md bg-[var(--accent)] text-[var(--accent-foreground)]">
             <FlaskConical size={16} />
           </span>

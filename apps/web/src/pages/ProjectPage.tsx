@@ -36,7 +36,7 @@ export default function ProjectPage() {
     return (
       <div className="mt-10 text-center">
         <p className="text-sm text-[var(--muted)]">Project not found.</p>
-        <Link to="/" className="mt-4 inline-block no-underline">
+        <Link to="/home" className="mt-4 inline-block no-underline">
           <Button variant="secondary">Back to Home</Button>
         </Link>
       </div>
