@@ -1,9 +1,29 @@
+import { copyFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
+// Copy the repo-root install.sh into the build output so Firebase Hosting serves
+// it at /install.sh — i.e. `curl -LsSf https://paper-baker.web.app/install.sh | sh`.
+// The canonical script stays at the repo root (single source of truth); the
+// "**" -> /index.html rewrite doesn't catch it because Hosting serves real
+// static files before applying rewrites.
+function copyInstaller() {
+  return {
+    name: "copy-installer",
+    apply: "build" as const,
+    writeBundle() {
+      copyFileSync(
+        fileURLToPath(new URL("../../install.sh", import.meta.url)),
+        fileURLToPath(new URL("./dist/install.sh", import.meta.url)),
+      );
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), copyInstaller()],
   server: {
     // The e2e suite runs its own Vite on an offset port (E2E_WEB_PORT) so it
     // never reuses or clashes with the dev server on 5173. Unset → default 5173.
