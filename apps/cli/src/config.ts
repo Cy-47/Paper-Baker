@@ -32,6 +32,10 @@ export interface GlobalConfig {
   // of token can be supplied out-of-band via $PAPERBAKER_TOKEN.
   accessToken?: string;
   uid?: string;
+  // Background auto-update opt-out. Undefined ⇒ enabled (the default for a fresh
+  // install); set to false by `pb update --auto off` to disable the throttled
+  // self-update that runs after commands. See helpers/update-check.ts.
+  autoUpdate?: boolean;
 }
 
 export function getGlobalConfigDir(): string {
@@ -91,9 +95,36 @@ export function saveGlobalConfig(config: GlobalConfig): void {
  *   > default (production).
  */
 export function getApiUrl(): string {
-  if (process.env["PAPERBAKER_API_URL"]) return process.env["PAPERBAKER_API_URL"];
+  const override = process.env["PAPERBAKER_API_URL"];
+  if (override) {
+    assertSafeApiUrl(override);
+    return override;
+  }
   if (process.env["PAPERBAKER_EMULATOR"]) return EMULATOR_API_URL;
   return loadGlobalConfig().apiUrl ?? DEFAULT_API_URL;
+}
+
+/**
+ * The access token is sent to the API base as a bearer credential, so a
+ * non-https PAPERBAKER_API_URL (e.g. from a poisoned environment) would leak it
+ * in plaintext to whatever host it names. Require https unless the host is
+ * loopback (local dev/testing over http is fine — nothing leaves the machine).
+ */
+function assertSafeApiUrl(url: string): void {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    throw new Error(`Invalid PAPERBAKER_API_URL: ${url}`);
+  }
+  const loopback =
+    u.hostname === "localhost" || u.hostname === "127.0.0.1" || u.hostname === "::1";
+  if (u.protocol !== "https:" && !loopback) {
+    throw new Error(
+      `PAPERBAKER_API_URL must use https:// (got ${u.protocol}//${u.hostname}) — ` +
+        "the access token is sent to this host.",
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -10,7 +10,23 @@ import { registerReadCommands } from "./commands/read.js";
 import { registerSyncCommand, syncProject } from "./commands/sync.js";
 import { registerUpdateCommand } from "./commands/update.js";
 import { registerUninstallCommand } from "./commands/uninstall.js";
+import {
+  announceAutoUpdate,
+  isAutoUpdateWorker,
+  launchAutoUpdate,
+  runAutoUpdateWorker,
+} from "./helpers/update-check.js";
 
+// A detached background process re-invokes this binary with a hidden self-update
+// argument (see launchAutoUpdate). Do the silent download/swap and exit before any
+// of the command machinery — or the sign-in / auto-sync hooks — spin up.
+if (isAutoUpdateWorker()) {
+  void runAutoUpdateWorker().finally(() => process.exit(0));
+} else {
+  void main();
+}
+
+function main(): Promise<void> {
 const program = new Command();
 
 program
@@ -29,6 +45,9 @@ const AUTH_COMMANDS = new Set([
   "update",
   "uninstall",
 ]);
+// Surface a completed background auto-update once, before anything else runs.
+program.hook("preAction", () => announceAutoUpdate());
+
 program.hook("preAction", (_thisCommand, actionCommand) => {
   if (AUTH_COMMANDS.has(actionCommand.name())) return;
   if (process.env["PAPERBAKER_QUIET"] || process.env["PAPERBAKER_TOKEN"]) return;
@@ -66,6 +85,15 @@ program.hook("postAction", async (_thisCommand, actionCommand) => {
   }
 });
 
+// Throttled background self-update: spawns a detached worker (see
+// helpers/update-check.ts) so the next invocation runs the latest release. Runs
+// for every command except update/uninstall, which manage the binary themselves.
+const NO_AUTOUPDATE = new Set(["update", "uninstall"]);
+program.hook("postAction", (_thisCommand, actionCommand) => {
+  if (NO_AUTOUPDATE.has(actionCommand.name())) return;
+  launchAutoUpdate();
+});
+
 registerLoginCommands(program);
 registerProjectCommands(program);
 registerPaperCommands(program);
@@ -78,7 +106,11 @@ registerUninstallCommand(program);
 // a revoked token, or a network error) into a clean one-line message + exit 1,
 // instead of an unhandled-rejection stack trace. Commands that handle their own
 // errors (and call process.exit) are unaffected.
-program.parseAsync().catch((err: unknown) => {
-  console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
-  process.exit(1);
-});
+return program.parseAsync().then(
+  () => undefined,
+  (err: unknown) => {
+    console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  },
+);
+}

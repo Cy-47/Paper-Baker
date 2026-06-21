@@ -14,6 +14,10 @@ firestore-debug.log
 test-results/
 playwright-report/
 
+# Release signing private key — never commit (public key signing-pub.pem is fine)
+pb-signing-private.pem
+*-signing-private.pem
+
 # OS
 .DS_Store
 Thumbs.db

@@ -12,11 +12,13 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # Actions are pinned to commit SHAs (not floating tags): this job holds the
+      # release signing key, so a hijacked tag on any action could exfiltrate it.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: pnpm
@@ -33,8 +35,14 @@ jobs:
       - name: Ad-hoc sign macOS binaries
         run: |
           RC_VER=0.29.0
+          # Pin the rcodesign tarball by checksum: it runs over (and rewrites)
+          # the macOS binaries BEFORE our Ed25519 signature, so a tampered
+          # download would be signed by us and pass verification. TOFU-pinned to
+          # the publisher's released hash; a mismatch aborts the release.
+          RC_SHA256=dbe85cedd8ee4217b64e9a0e4c2aef92ab8bcaaa41f20bde99781ff02e600002
           curl -fsSL -o /tmp/rc.tar.gz \
             "https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign/${RC_VER}/apple-codesign-${RC_VER}-x86_64-unknown-linux-musl.tar.gz"
+          echo "${RC_SHA256}  /tmp/rc.tar.gz" | sha256sum -c -
           tar -xzf /tmp/rc.tar.gz -C /tmp
           RC="$(find /tmp -name rcodesign -type f | head -1)"
           for b in apps/cli/binaries/pb-darwin-arm64 apps/cli/binaries/pb-darwin-x64; do
@@ -49,12 +57,20 @@ jobs:
         run: |
           cd apps/cli/binaries
           for f in pb-*; do
-            case "$f" in *.sha256) continue ;; esac
+            case "$f" in *.sha256 | *.sig) continue ;; esac
             sha256sum "$f" > "$f.sha256"
           done
 
+      # Ed25519-sign each final binary. The CLI verifies <asset>.sig against the
+      # embedded public key BEFORE installing an auto-update — the trust anchor
+      # for unattended updates. The private key lives only as a repo secret.
+      - name: Sign binaries
+        env:
+          PB_SIGNING_KEY: ${{ secrets.PB_SIGNING_KEY }}
+        run: node apps/cli/scripts/sign-binaries.mjs
+
       - name: Upload binaries to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: apps/cli/binaries/pb-*
           fail_on_unmatched_files: true
