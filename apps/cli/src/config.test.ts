@@ -71,4 +71,16 @@ describe("API URL resolution", () => {
     process.env["PAPERBAKER_API_URL"] = "https://override.test";
     expect(getApiUrl()).toBe("https://override.test");
   });
+
+  it("rejects a non-https PAPERBAKER_API_URL (token would leak in plaintext)", () => {
+    process.env["PAPERBAKER_API_URL"] = "http://evil.test";
+    expect(() => getApiUrl()).toThrow(/must use https/i);
+  });
+
+  it("allows http only for loopback hosts (local dev)", () => {
+    process.env["PAPERBAKER_API_URL"] = "http://127.0.0.1:5050/api";
+    expect(getApiUrl()).toBe("http://127.0.0.1:5050/api");
+    process.env["PAPERBAKER_API_URL"] = "http://localhost:5050/api";
+    expect(getApiUrl()).toBe("http://localhost:5050/api");
+  });
 });

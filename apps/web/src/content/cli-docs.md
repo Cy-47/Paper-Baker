@@ -155,6 +155,25 @@ Print the current authentication status.
 
 Update `pb` to the latest release. `--force` reinstalls even if already current.
 
+Because `pb` is meant to be driven by coding agents, it also keeps itself current
+on its own: after a command (at most once every four hours) it checks for a newer
+release in the background and, if there is one, downloads and swaps the binary in
+place — the running command never waits, and the next invocation runs the new
+version and prints a one-line notice. Turn it off with `pb update --auto off`
+(persisted) or `PAPERBAKER_NO_UPDATE=1` (per-invocation); re-enable with
+`pb update --auto on`.
+
+Every download — manual or automatic — is verified before it is installed. Each
+release binary is signed in CI with an Ed25519 key whose public half is compiled
+into `pb`; an update is written only if its signature verifies against that key,
+so a tampered or unsigned binary is rejected with the current install untouched.
+Updates also only ever move **forward** (a lower or equal version is a no-op, so a
+yanked or tampered "latest" can't trigger a downgrade). Background auto-update runs
+on signed standalone builds across macOS, Linux, and Windows, and is skipped when a
+release-endpoint override (`PAPERBAKER_GITHUB_*` / `PAPERBAKER_RELEASE_REPO`) is
+set, so a poisoned environment can't silently redirect it; npm/dev installs use the
+manual `pb update`.
+
 #### `pb uninstall`
 
 Remove the binary and its `PATH` entries. `--purge` also deletes the stored config;
@@ -164,8 +183,9 @@ Remove the binary and its `PATH` entries. `--purge` also deletes the stored conf
 
 | Variable | Effect |
 | --- | --- |
-| `PAPERBAKER_QUIET=1` | Silence the "not signed in" notice |
+| `PAPERBAKER_QUIET=1` | Silence the "not signed in" notice (and the auto-update notice) |
 | `PAPERBAKER_NO_SYNC=1` | Disable the automatic post-command sync |
+| `PAPERBAKER_NO_UPDATE=1` | Disable the background auto-update for this invocation |
 | `PAPERBAKER_TOKEN` | Supply a credential for headless/CI use |
 | `PAPERBAKER_API_URL` | Override the backend API base URL |
 

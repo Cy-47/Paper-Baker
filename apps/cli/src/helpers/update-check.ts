@@ -1,0 +1,181 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { spawn } from "node:child_process";
+import { getGlobalConfigDir, loadGlobalConfig } from "../config.js";
+import { VERSION } from "../version.js";
+import { downloadAndSwap, fetchLatestTag, isNewer, normalizeVersion, isPackaged } from "./release.js";
+import { signingConfigured } from "./signature.js";
+
+// ---------------------------------------------------------------------------
+// Background auto-update.
+//
+// `pb` is agent-facing — no human is reading stdout to act on an "update
+// available" nudge — so being out of date should fix itself. After a command,
+// at most once every UPDATE_INTERVAL_MS, a detached worker checks GitHub and, if
+// a newer release exists, downloads + atomically swaps the binary. The current
+// command never waits on it (the running process keeps its old inode anyway); the
+// NEXT invocation runs the new binary and announces the swap once.
+//
+// Mirrors the best-effort auto-sync hook in index.ts: silent, errors swallowed,
+// never changes a command's outcome. Opt out with `pb update --auto off`
+// (persisted) or PAPERBAKER_NO_UPDATE=1 (per-invocation).
+// ---------------------------------------------------------------------------
+
+/** How long to wait between background update checks. */
+export const UPDATE_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
+
+/**
+ * Hidden argv that re-enters the binary as the background update worker. Using a
+ * sentinel ARGUMENT (not an env var) means an ambient/poisoned environment can't
+ * silently turn every `pb <command>` into a no-op worker run — the worker is only
+ * entered when WE spawn the child with this exact arg.
+ */
+export const SELF_UPDATE_ARGV = "__self-update";
+
+interface UpdateState {
+  /** Epoch ms of the last background check; throttles the next one. */
+  lastCheckedMs?: number;
+  /** Version a worker just installed, awaiting a one-time notice on next run. */
+  pendingNoticeVersion?: string;
+}
+
+function statePath(): string {
+  return path.join(getGlobalConfigDir(), "update.json");
+}
+
+export function loadUpdateState(): UpdateState {
+  try {
+    return JSON.parse(fs.readFileSync(statePath(), "utf-8")) as UpdateState;
+  } catch {
+    return {};
+  }
+}
+
+export function saveUpdateState(state: UpdateState): void {
+  const dir = getGlobalConfigDir();
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(statePath(), JSON.stringify(state, null, 2) + "\n");
+}
+
+/** Env vars that redirect where releases are fetched from (test/dev hooks). */
+export const ENDPOINT_OVERRIDES = [
+  "PAPERBAKER_RELEASE_REPO",
+  "PAPERBAKER_GITHUB_API",
+  "PAPERBAKER_GITHUB_DOWNLOAD",
+] as const;
+
+/**
+ * Whether auto-update is permitted on this host. Pure so the gating is testable
+ * without a packaged binary. It is off when:
+ *  - not packaged (dev/npm installs can't self-swap)
+ *  - the build has no embedded signing key (we'd only ever fail closed at verify)
+ *  - a release endpoint/repo env override is set (don't let a poisoned env
+ *    silently redirect a SILENT background update to an attacker's server —
+ *    overrides remain usable for the explicit, human-run `pb update`)
+ *  - disabled via env (PAPERBAKER_NO_UPDATE) or config (autoUpdate: false)
+ *
+ * Windows IS included: the swap works there (swapBinary renames the live .exe
+ * aside), and a background update faces the same OS checks as the install path
+ * (same bytes, same source, no Mark-of-the-Web), so if install works, update
+ * works. validate-before-swap prevents a bricked state if AV ever interferes.
+ */
+export function autoUpdateEnabled(opts: {
+  packaged: boolean;
+  signingConfigured: boolean;
+  endpointsOverridden: boolean;
+  envDisabled: boolean;
+  configDisabled: boolean;
+}): boolean {
+  if (!opts.packaged) return false;
+  if (!opts.signingConfigured) return false;
+  if (opts.endpointsOverridden) return false;
+  if (opts.envDisabled) return false;
+  if (opts.configDisabled) return false;
+  return true;
+}
+
+/** Has enough time passed since the last check to run another one? */
+export function dueForCheck(
+  state: UpdateState,
+  nowMs: number,
+  intervalMs: number = UPDATE_INTERVAL_MS,
+): boolean {
+  if (state.lastCheckedMs === undefined) return true;
+  return nowMs - state.lastCheckedMs >= intervalMs;
+}
+
+/** Compose the pure predicate from the real host/env/config. */
+function autoUpdateEnabledHere(): boolean {
+  return autoUpdateEnabled({
+    packaged: isPackaged(),
+    signingConfigured: signingConfigured(),
+    endpointsOverridden: ENDPOINT_OVERRIDES.some((k) => Boolean(process.env[k])),
+    envDisabled: Boolean(process.env["PAPERBAKER_NO_UPDATE"]),
+    configDisabled: loadGlobalConfig().autoUpdate === false,
+  });
+}
+
+export function isAutoUpdateWorker(argv: string[] = process.argv): boolean {
+  return argv[2] === SELF_UPDATE_ARGV;
+}
+
+/**
+ * Foreground: if a background worker recently installed a new version (and we're
+ * now running it), print a single notice to stderr — never stdout, so `--json`
+ * stays clean — and clear the flag so it shows only once.
+ */
+export function announceAutoUpdate(): void {
+  if (process.env["PAPERBAKER_QUIET"]) return;
+  const state = loadUpdateState();
+  if (!state.pendingNoticeVersion) return;
+  // Only announce once we're actually executing the new binary; an older process
+  // that started before the swap will leave the notice for the next run.
+  if (state.pendingNoticeVersion !== VERSION) return;
+  console.error(`pb auto-updated to v${VERSION}.`);
+  const { pendingNoticeVersion: _done, ...rest } = state;
+  saveUpdateState(rest);
+}
+
+/**
+ * Foreground: if eligible and due, stamp the check time and spawn a detached,
+ * unref'd worker so the current command exits immediately. Best-effort — any
+ * failure is swallowed.
+ */
+export function launchAutoUpdate(): void {
+  try {
+    if (!autoUpdateEnabledHere()) return;
+    const state = loadUpdateState();
+    if (!dueForCheck(state, Date.now())) return;
+    // Stamp BEFORE spawning so rapid back-to-back commands don't each fire a
+    // worker (and don't hammer GitHub's unauthenticated rate limit).
+    saveUpdateState({ ...state, lastCheckedMs: Date.now() });
+    const child = spawn(process.execPath, [SELF_UPDATE_ARGV], {
+      detached: true,
+      stdio: "ignore",
+      // Don't flash a console window for the background worker on Windows.
+      windowsHide: true,
+    });
+    child.unref();
+  } catch {
+    // Auto-update is a convenience; never let it disturb the command.
+  }
+}
+
+/**
+ * The detached worker body: fetch the latest tag and, if it's newer than what's
+ * running, download + swap it in, then record a pending notice for the next
+ * foreground run. Fully silent; all failures are swallowed.
+ */
+export async function runAutoUpdateWorker(): Promise<void> {
+  try {
+    if (!isPackaged()) return;
+    const tag = await fetchLatestTag();
+    // Only move forward to a strictly-newer signed release (downloadAndSwap
+    // verifies the signature before swapping).
+    if (!isNewer(tag, VERSION)) return;
+    await downloadAndSwap(tag);
+    saveUpdateState({ ...loadUpdateState(), pendingNoticeVersion: normalizeVersion(tag) });
+  } catch {
+    // Silent: a failed background update just means we try again next interval.
+  }
+}
