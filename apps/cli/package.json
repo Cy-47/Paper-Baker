@@ -1,6 +1,6 @@
 {
   "name": "@paper-baker/cli",
-  "version": "0.1.3",
+  "version": "0.2.0-rc.1",
   "type": "module",
   "description": "Agent-facing CLI for managing research papers from arXiv",
   "bin": {
