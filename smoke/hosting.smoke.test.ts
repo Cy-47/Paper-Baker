@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 
-// Full-stack hosting smoke test — hits the HOSTING emulator (:5050) over real
+// Full-stack hosting smoke test — hits the HOSTING emulator (PAPERBAKER_HOSTING_URL,
+// the isolated :5150 via the test:smoke script; defaults to :5050) over real
 // HTTP, so it exercises the firebase.json rewrites AND the tsup-built functions
 // bundle in plain Node: the deployment wiring the handler-level integration
 // tests bypass (those mount handlers from source behind their own server). This

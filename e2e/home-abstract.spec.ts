@@ -24,15 +24,28 @@ const PAPER = {
 };
 
 async function signIn(page: Page) {
-  await page.goto("/");
+  // Sign in on /login: while unauthenticated it shows the form (no redirect away),
+  // and its useEffect does a CLIENT-SIDE navigate to /home once auth resolves —
+  // preserving the live emulator session (a full reload/goto would drop it, and
+  // racing Root's "/" → /site redirect is flaky).
+  await page.goto("/login");
   await page.waitForFunction(
-    () =>
-      typeof (window as unknown as { __pbDevSignIn?: unknown }).__pbDevSignIn ===
-      "function"
+    () => typeof (window as unknown as { __pbDevSignIn?: unknown }).__pbDevSignIn === "function"
   );
   await page.evaluate(() =>
-    (window as unknown as { __pbDevSignIn: () => Promise<unknown> }).__pbDevSignIn()
+    (window as unknown as { __pbDevSignIn: () => Promise<string> }).__pbDevSignIn()
   );
+  // A brand-new account hits the handle-onboarding modal. Only the FIRST signed-in
+  // test of a run sees it — the claimed handle persists in the emulator (firestore
+  // isn't wiped between tests), so later tests load straight into the app.
+  const handleInput = page.getByLabel("Handle");
+  try {
+    await handleInput.waitFor({ state: "visible", timeout: 4000 });
+    await handleInput.fill("dev-user");
+    await page.getByRole("button", { name: /continue/i }).click();
+  } catch {
+    /* handle already claimed earlier in the run — no modal */
+  }
   await expect(
     page.getByRole("complementary").getByRole("link", { name: "Find papers" })
   ).toBeVisible();

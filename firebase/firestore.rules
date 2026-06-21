@@ -1,6 +1,16 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+    // Membership is the single read gate for projects and their papers: a doc is
+    // readable iff the caller's uid is in its `memberUids`. Today that array holds
+    // only the owner; sharing appends uids, so this rule never has to change.
+    function isMember(data) {
+      return signedIn() && request.auth.uid in data.memberUids;
+    }
+
     // Global, deduplicated paper metadata cache. Readable by any signed-in user,
     // but writable ONLY by the backend (the papers function, via the Admin SDK,
     // which bypasses these rules). Clients must never write here: it is shared
@@ -8,83 +18,94 @@ service cloud.firestore {
     // app never needs to — it renders from its own users/{uid}/savedPapers copy
     // and resolves uncached papers through the backend.
     match /papers/{paperId} {
-      allow read: if request.auth != null;
+      allow read: if signedIn();
       allow write: if false;
     }
 
-    // Device-link login codes are managed exclusively by the backend (Admin
-    // SDK, which bypasses rules). No client may read or write them — the secret
-    // device code and the bound uid must never be client-accessible.
+    // Public user profiles: { handle, displayName, createdAt }. Readable by any
+    // signed-in user — a share panel must render "Alice Chen (@alice)" and the
+    // handle/id remote must resolve an owner. Backend-only writes, so a client can
+    // never forge a handle or claim a display name it didn't register.
+    match /users/{userId} {
+      allow read: if signedIn();
+      allow write: if false;
+
+      // A user's saved papers (the "Library"): thin { paperId, savedAt } records;
+      // metadata lives in the global papers/ cache. Read-your-own, backend-write.
+      match /savedPapers/{paperId} {
+        allow read: if signedIn() && request.auth.uid == userId;
+        allow write: if false;
+      }
+
+      // Connected CLIs, surfaced in the web "CLI" tab (display metadata +
+      // revocation status; the token hash lives backend-only in cliSessions).
+      // Deletes go through the device API.
+      match /clis/{connectionId} {
+        allow read: if signedIn() && request.auth.uid == userId;
+        allow write: if false;
+      }
+
+      // Append-only CLI activity log shown below the connection list. The backend
+      // appends a connect/delete entry per event; the owner reads their own.
+      match /cliEvents/{eventId} {
+        allow read: if signedIn() && request.auth.uid == userId;
+        allow write: if false;
+      }
+    }
+
+    // Handle → uid registry, used to resolve a typed `handle/id` to its owner and
+    // to enforce handle uniqueness. Public read (resolution is a signed-in lookup);
+    // backend-only write, so uniqueness is minted in one place and never forged.
+    match /handles/{handle} {
+      allow read: if signedIn();
+      allow write: if false;
+    }
+
+    // Device-link login codes are managed exclusively by the backend (Admin SDK,
+    // which bypasses rules). No client may read or write them — the secret device
+    // code and the bound uid must never be client-accessible.
     match /deviceCodes/{deviceCode} {
       allow read, write: if false;
     }
 
-    // Backend-only secret material for connected CLIs: the SHA-256 of each
-    // access token plus the uid it resolves to (keyed by connectionId). Locked
-    // off entirely — the hash must never be client-readable, and only the
-    // device-link flow (Admin SDK) may write it. The user-facing, client-managed
-    // half lives under users/{uid}/clis below.
+    // Backend-only secret material for connected CLIs: the SHA-256 of each access
+    // token plus the uid it resolves to (keyed by connectionId). Locked off — the
+    // hash must never be client-readable; only the device-link flow may write it.
     match /cliSessions/{connectionId} {
       allow read, write: if false;
     }
 
     // Backend-only rate-limiter state (the global arXiv request-slot clock). Held
-    // and advanced exclusively by the Functions backend (Admin SDK); no client
-    // may read or write it.
+    // and advanced exclusively by the Functions backend (Admin SDK).
     match /rateLimits/{name} {
       allow read, write: if false;
     }
 
-    // Per-user data — read-your-own, WRITE BACKEND-ONLY. The web reads these via
-    // real-time snapshots but performs every mutation through the Functions API
-    // (Admin SDK, which bypasses these rules), exactly like the CLI. Making the
-    // backend the sole writer means there is one implementation of the domain
-    // rules (slug minting, projectPaper ⊆ savedPapers, terminal revoke, …) and no
-    // way for a client to write an inconsistent or forged document.
-
-    // A user's saved papers (the "Library"): thin { paperId, savedAt } records;
-    // metadata lives in the global papers/ cache.
-    match /users/{userId}/savedPapers/{paperId} {
-      allow read: if request.auth != null && request.auth.uid == userId;
-      allow write: if false;
-    }
-
-    // Connected CLIs, surfaced in the web "CLI" tab (display metadata + revocation
-    // status; the token hash lives backend-only in cliSessions above). Deletes go
-    // through the device API.
-    match /users/{userId}/clis/{connectionId} {
-      allow read: if request.auth != null && request.auth.uid == userId;
-      allow write: if false;
-    }
-
-    // Append-only CLI activity log shown below the connection list. The backend
-    // appends a connect/delete entry per event; the owner reads their own.
-    match /users/{userId}/cliEvents/{eventId} {
-      allow read: if request.auth != null && request.auth.uid == userId;
-      allow write: if false;
-    }
-
-    // Projects are scoped under their owner: users/{uid}/projects/{id}.
-    match /users/{userId}/projects/{projectId} {
-      allow read: if request.auth != null && request.auth.uid == userId;
+    // Projects are TOP-LEVEL and globally addressable: projects/{stableId}, owned
+    // by one user. Reads authorize on membership (owner-only today); all writes go
+    // through the Functions API (Admin SDK), so there is one implementation of the
+    // domain rules (id minting, projectPaper ⊆ savedPapers, member fan-out, …) and
+    // no way for a client to write an inconsistent or forged document.
+    match /projects/{stableId} {
+      allow read: if isMember(resource.data);
       allow write: if false;
 
-      // projectPapers: the papers filed into this project — the single source of
-      // truth for the project<->paper link. ownerUid is stamped by the backend so
-      // the cross-project collectionGroup read below can authorize on it.
+      // projectPapers: the papers filed into this project. `memberUids` is
+      // denormalized from the parent so the cross-project collectionGroup read
+      // below can authorize on it without a parent lookup.
       match /projectPapers/{paperId} {
-        allow read: if request.auth != null && request.auth.uid == userId;
+        allow read: if isMember(resource.data);
         allow write: if false;
       }
     }
 
     // Cross-project membership reads. collectionGroup("projectPapers") matches by
-    // collection id at any depth, so it can't bind {userId} from the path — it is
-    // authorized on the doc's ownerUid instead, and the query MUST filter
-    // where("ownerUid", "==", uid) (rules validate, they don't filter).
+    // collection id at any depth, so it can't bind {stableId} from the path — it is
+    // authorized on the doc's memberUids instead, and the query MUST filter
+    // where("memberUids", "array-contains", uid) (rules validate, they don't filter).
     match /{path=**}/projectPapers/{paperId} {
-      allow read: if request.auth != null
-        && request.auth.uid == resource.data.ownerUid;
+      allow read: if signedIn()
+        && request.auth.uid in resource.data.memberUids;
     }
   }
 }

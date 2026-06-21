@@ -10,9 +10,12 @@ over one shared core:
 
 Designed around arxiv, structured so other APIs and manual PDF+OCR drop in as plugins.
 
-> **Scope (v1):** single-user. Each project has one owner and lives under that owner
-> (`users/{uid}/projects/{id}`). Sharing is deferred; per-user scoping keeps a future share
-> feature additive (a membership index) rather than a carried-but-unused field.
+> **Scope:** single-user *today*, but the remote is **collaboration-ready**. Each project is a
+> top-level, globally-addressable doc (`projects/{id}`) owned by one user and addressed as
+> `handle/id` (GitHub-style). Access is gated on a `memberUids` array that currently holds only
+> the owner — so turning on **sharing** later is purely additive (invitations + an endpoint that
+> appends a uid to `memberUids`), with no data migration or rules rewrite. Sharing itself
+> (invites, roles, the import-to-library follow) is **deferred**; see §8.
 
 ---
 
@@ -115,8 +118,12 @@ interface PaperMetadata {
 ### 3.2 Firestore collections
 
 ```
-users/{uid}
-    { displayName, email, settings, createdAt }
+users/{uid}                             ← public profile (NEW): the GitHub-style identity
+    { handle, displayName, createdAt }  ← uid stays the internal key; handle is the public alias
+                                          (user-specified, unique); displayName is the shown name
+
+handles/{handle}                        ← uniqueness + reverse lookup (NEW), backend-only write
+    { uid }                             ← lets a typed `handle/id` resolve to a uid
 
 cliSessions/{connectionId}              ← CLI auth, backend-only (see §5.1)
     { connectionId, uid, tokenHash, createdAt }   ← SHA-256 of the access token; never the token
@@ -135,28 +142,46 @@ papers/{paperId}                        ← GLOBAL, deduplicated, shared by all 
 users/{uid}/savedPapers/{paperId}       ← per-user library: a THIN record, no metadata
     { paperId, savedAt }   ← id + user-specific data only; metadata lives in papers/{id}
 
-users/{uid}/projects/{projectId}        ← per-user; scoped under the owner
-    { projectId, slug, name, description, ownerUid,
+projects/{stableId}                     ← TOP-LEVEL, globally addressable, one owner
+    { stableId, id, name, description, ownerUid, ownerHandle,
+      memberUids: [ownerUid],           ← read key; only the owner today, sharing appends here
+      visibility: "private",            ← only value today; the slot public/share-to-web slides into
       createdAt, updatedAt, paperCount }
+    (stableId = hidden global doc key; id = user-facing, owner-unique, renamable identifier;
+     ownerUid = the truth for ownership; ownerHandle = a display denorm off it)
 
-users/{uid}/projects/{projectId}/projectPapers/{paperId}   ← project ↔ paper membership
-    { paperId, projectId, ownerUid, addedAt }   ← ownerUid denormalized for collectionGroup
+projects/{stableId}/projectPapers/{paperId}   ← project ↔ paper membership
+    { paperId, projectStableId, memberUids: [ownerUid], addedAt }   ← memberUids denormalized for
+                                          the collectionGroup read (array-contains), mirrors parent
 ```
 
-**Project identity: stable id + renamable slug**
-- Projects are **scoped per-user** (`users/{uid}/projects/{id}`). Most users have well under
-  ~20 projects, so an id only needs to be unique within one user's projects.
-- `projectId` is a **stable 4-char id** (`core.generateProjectId()`) — the durable key. It is
-  *plumbing*: it appears only in the CLI's `paperbaker/config.json` (like a `.git` ref) and as
-  the Firestore doc id. Users never type it.
-- `slug` is derived from the name (`core.slugify(name)`), unique within the user, and is the
-  **only handle users see/type** — in `pb project` commands, URLs, and error messages.
-- This decoupling is what makes **rename cheap and binding-safe**: renaming updates `name` +
-  `slug` in a single field write; the stable `projectId` never changes, so every CLI binding
-  keeps working across renames with no migration. (The alternative — slug *as* the id — would
-  turn every rename into a doc-id migration that breaks bound `config.json` files.)
-- The stable id buys exactly one thing: silent rename-survival of bindings. That's why it's
-  worth carrying a second (hidden) identifier.
+**Project identity: a hidden global `stableId` + a per-owner `id`, addressed as `handle/id`**
+- Projects are **top-level** (`projects/{stableId}`), each owned by one user. The remote coordinate
+  a user types is **`handle/id`** (GitHub-style); a bare `id` means "my own project".
+- `stableId` is a **server-minted, globally-unique** key — the durable handle. It is *plumbing*:
+  it appears only in the CLI's `paperbaker/config.json` (like a `.git` ref) and as the Firestore
+  doc id. Users never type it. (It was a client-minted 4-char id under the old per-user model; a
+  global namespace makes it server-minted — see the behavior note below.)
+- `id` is derived from the name (`core.slugify(name)`), unique **within the owner**, renamable, and
+  is the user-facing project identifier — what users type in `pb project` commands and see in error
+  messages. (This is what used to be called `slug`.) The web app's internal route *path* uses the
+  immutable `stableId` (`/projects/{stableId}`) so an open project page survives a rename, which
+  re-derives the `id`; the pretty `handle/id` URL is a deferred enhancement (§8).
+- `ownerUid` is the **sole source of truth for ownership**; `ownerHandle` is just a denormalized
+  display copy off it (refreshed if the owner renames their handle). Bindings and access never key
+  on the handle — only on `stableId` / `ownerUid`.
+- This decoupling keeps **rename cheap and binding-safe**: renaming updates `name` + `id` in a
+  single field write; `stableId` never changes, so every CLI binding survives renames with no
+  migration. (Using the `id` as the doc key would turn every rename into a doc-id migration that
+  breaks bound `config.json` files.)
+
+> **Behavior change — global ownership retires the client-minted "re-home onto any account" model.**
+> Previously the CLI minted the id and the same id could be re-created under whatever account you
+> logged in as (per-user scoping). With one global owner per project, a bound directory belongs to
+> one account's project: switching accounts and syncing it is no longer a silent re-home — that
+> becomes *sharing* (deferred, §8). For the interim, binding/syncing a project you don't own (aren't
+> in `memberUids`) fails with a clear message; an offline project gets a fresh server-minted id on
+> its first publish.
 
 **Metadata lives in exactly one place**
 - `papers/{id}` is **global, deduped, and the only store of paper metadata**: tex/PDF and the
@@ -173,9 +198,10 @@ users/{uid}/projects/{projectId}/projectPapers/{paperId}   ← project ↔ paper
 - **`projectPaper ⊆ savedPapers`**: filing a paper into a project also writes its `savedPapers`
   record (both surfaces), so a filed paper always appears in the library, never as an orphan
   membership.
-- **Sharing (`memberUids`) is deferred, not designed-in.** Per-user scoping makes a future
-  share feature additive work (a separate membership index / collection-group query), not a
-  field that's silently carried unused. v1 has no sharing.
+- **Sharing is deferred but the data model is ready for it.** `memberUids` is live now (holding
+  just the owner), so reads and rules already authorize on membership. Enabling sharing later is
+  additive: add invitations + an endpoint that appends a uid to a project's `memberUids` (and
+  fans that out to its `projectPapers`). No migration, no rules rewrite. See §8.
 
 ### 3.3 Security rules (read-your-own, write backend-only)
 
@@ -186,10 +212,15 @@ for a client to write an inconsistent or forged document. Rules therefore allow 
 deny *all* client writes:
 
 - `papers/*` — read: any authenticated user; write: `false` (backend only; anti-poisoning).
+- `users/{uid}` profile — read: any authenticated user (handle + displayName are public); write: `false`.
+- `handles/*` — read: any authenticated user (resolve `handle`→uid); write: `false`.
 - `users/{uid}/savedPapers/**` — read: owner; write: `false`. Thin records; metadata lives in `papers/`.
-- `users/{uid}/projects/**` and nested `projectPapers/{id}` — read: owner; write: `false`.
-- `{path=**}/projectPapers/{id}` — collectionGroup read authorized on `ownerUid == uid` (the query
-  must filter `where("ownerUid","==",uid)`); lets the web read every membership at once.
+- `projects/{id}` and nested `projectPapers/{id}` — read: `request.auth.uid in resource.data.memberUids`;
+  write: `false`. Membership is the single read gate — today that's just the owner, tomorrow it's
+  the shared set, with no rule change.
+- `{path=**}/projectPapers/{id}` — collectionGroup read authorized on `uid in resource.data.memberUids`
+  (the query must filter `where("memberUids","array-contains",uid)`); lets the web read every
+  membership at once, across owned and (later) shared projects.
 - `users/{uid}/clis/**` — read: owner; write: `false`. Deletes go through the device API.
 - `users/{uid}/cliEvents/**` — read: owner; write: `false`. Append-only log; the backend writes
   one entry per connect/delete (the device API), so deletion history survives the connection.
@@ -218,7 +249,10 @@ via Firestore snapshots (admin writes still fire those listeners, so the UI stay
 | `GET  /papers/search?q=&source=` | Search via provider (default arxiv). Results not auto-cached until added. |
 | `POST /library` `{source}` | Save a paper: resolve into `papers/`, then write the thin `savedPapers` record. |
 | `DELETE /library/:paperId` | Unsave a paper; also unfiles it from every project (cascade). |
-| `POST /projects` / `GET /projects` / `GET /projects/:id` / `PATCH` / `DELETE` | Project CRUD (scoped to `users/{uid}`). `POST` mints a stable 4-char id + unique slug; `PATCH {name}` re-slugs. `:id` accepts the stable id **or** the slug. |
+| `GET /me` / `PUT /me` `{handle?,displayName?}` | The caller's profile. `PUT` claims/changes the handle (unique via the `handles` registry) and display name. |
+| `GET /users/:handle` | Public profile lookup (resolve a handle to its display name / uid). |
+| `POST /projects` / `GET /projects` / `GET /projects/:stableId` / `PATCH` / `DELETE` | Project CRUD. `GET /projects` lists where `memberUids` contains the caller. `POST` server-mints the global `stableId` + an owner-unique `id`; `PATCH {name}` re-derives the `id`. Single-segment routes address by `stableId` and authorize on membership. |
+| `GET /projects/:handle/:id` | Resolve the `handle/id` remote coordinate (owner handle + project id) to a project (membership-gated). |
 | `POST /projects/:id/papers` `{paperId}` | File a paper into a project (also ensures it's in `savedPapers`). |
 | `DELETE /projects/:id/papers/:paperId` | Unfile from a project (leaves it saved). |
 | `GET  /projects/:id/manifest` | Full project state for CLI sync: papers + metadata + source status. |
@@ -270,16 +304,17 @@ and returns it once.
 ### 5.2 Project binding (per-dir), like `git`
 
 A directory is *bound* to a server project by `paperbaker/config.json`. Identity is split:
-`name` is always present; `stableId` is the durable server key, **minted on the first `pb sync`**
-— its presence is the binding (set ⇔ synced, absent ⇔ offline, no `local-…` sentinel); `slug` is
-the server's renamable handle. Because `stableId` is client-owned it stays constant across accounts,
-so the binding survives renames *and* re-homing. Binding happens via the `pb project` subcommand
+`name` is always present; `stableId` is the durable **server-minted** key the binding is keyed on
+— its presence is the binding (set ⇔ synced, absent ⇔ offline, no `local-…` sentinel); `id` caches
+the project's renamable identifier and `ownerHandle` caches the owner's handle, both for display and
+both refreshed on sync (the binding itself depends on neither — only on `stableId`). Together they
+let the directory show its `handle/id` remote. Binding happens via the `pb project` subcommand
 (§5.2.1), which replaces the old single `init`.
 
 ```
 AGENTS.md                # root brief: a short, marked block pointing here  ← COMMIT
 paperbaker/              # ONE visible dir — everything is searchable
-├── config.json      # { name, stableId?, slug?, rootBrief? }   (stableId absent ⇒ offline)
+├── config.json      # { name, stableId?, id?, ownerHandle?, rootBrief? }   (stableId absent ⇒ offline)
 ├── papers.json      # lockfile: paper list + cached metadata        ← COMMIT
 ├── refs.bib         # generated BibTeX bibliography                  ← COMMIT
 ├── README.md        # generated guide: what's here, how to read it   ← COMMIT
@@ -318,10 +353,11 @@ whether the project is new, existing, or offline.
 ```
 pb project create [name]              scaffold dir; publish to the server if logged in, else local
 pb project list                       your remote projects; marks the one bound here (*)
-pb project bind <slug>                attach this dir to an existing remote project
-pb project bind <slug> --merge        on drift, union local <-> remote (non-interactive)
-pb project bind <slug> --replace-local   on drift, take remote wholesale
-pb project rename <name>              update name+slug locally and remote (one field write if bound)
+pb project bind <id|handle/id>        attach this dir to a project (bare id = your own;
+                                       handle/id = another owner's, once shared with you)
+pb project bind <target> --merge        on drift, union local <-> remote (non-interactive)
+pb project bind <target> --replace-local   on drift, take remote wholesale
+pb project rename <name>              update name+id locally and remote (one field write if bound)
 pb project delete                     delete the remote project (and unbind)
 pb project unbind                     detach this dir (drop stableId), keeping both copies
 pb sync                               publish (first sync) / reconcile a bound project
@@ -337,21 +373,23 @@ offline  ──sync (logged in)──▶ bound (mints stableId, creates the proj
 offline  ──bind────▶ bound (merge | replace-local on drift)
 bound    ──sync──▶ bound (push local-only up, union the server's papers back down)
 bound    ──unbind──▶ offline (stableId dropped; a later sync re-publishes under a fresh id)
-bound    ──rename──▶ bound (slug changes, stableId stable)
+bound    ──rename──▶ bound (id changes, stableId stable)
 ```
 
 **Rules of behavior**
-- **`create` is online-first** — logged in, it mints the `stableId` and creates the server doc
-  immediately, so the project is synced from birth and every later mutation mirrors. With no
-  credential (or if the server is unreachable) it falls back to a local-only project, which the
-  first `pb sync` then publishes. There is no `--offline` flag and no separate `push`/promote step.
+- **`create` is online-first** — logged in, it asks the server to create the project (which
+  server-mints the `stableId` + `id`), so the project is synced from birth and every later mutation
+  mirrors. With no credential (or if the server is unreachable) it falls back to a local-only
+  project, which the first `pb sync` then publishes (the server mints the id then). There is no
+  `--offline` flag and no separate `push`/promote step.
 - **Mutations follow the binding:** once a project is bound, `add`/`remove`/`rename`/`delete`
   write through to the server. `add`/`remove` do **not** auto-publish an offline project — a single
   mutation can't carry the full local paper set onto a fresh server doc, so that reconcile stays
   `pb sync`'s job.
-- **`bind <slug>`** resolves the slug under the caller's account. With no flag, if local state
-  differs from the remote manifest it **prompts to merge**; `--merge` / `--replace-local` make
-  that non-interactive.
+- **`bind <id|handle/id>`** — a bare `id` resolves under the caller's own account; `handle/id`
+  resolves another owner's project (which today requires membership, so it's only your own until
+  sharing lands). With no flag, if local state differs from the remote manifest it **prompts to
+  merge**; `--merge` / `--replace-local` make that non-interactive.
 - **`bind` into an already-bound dir** refuses unless preceded by `unbind` (no silent rebind).
 - **Sync semantics — never-drop:** `sync` pushes local-only papers up, then unions the server's
   papers back down. It never lets the server *delete* a paper the directory still holds — that is
@@ -448,3 +486,31 @@ Each layer trades fidelity for speed; they overlap on purpose.
 The integration tests mount handlers **from source** for fast, source-level coverage — so they cannot
 see a broken `dist` bundle, a missing rewrite, or a wrong runtime env. Those are exactly the three
 latent prod bugs found earlier; the hosting smoke test exists to guard that seam.
+
+---
+
+## 8. Collaboration (deferred — the remote above is built ready for it)
+
+The remote in §3–§5 is shaped so sharing is **additive**, not a rewrite. When we turn it on:
+
+- **Invites (in-app, no email needed).** `invitations/{id}` ties a project to an invitee uid with a
+  role; the invitee reads their own pending invites (`auth.uid == inviteeUid`) and accepts/declines
+  through the API. Accepting appends their uid to the project's `memberUids` (and fans out to its
+  `projectPapers`). No email infra exists today, so the first cut of sharing surfaces invites in an
+  in-app inbox — a web "Pending invitations" list + `pb invites`. Email notifications / inviting
+  not-yet-registered people by address are a later add-on (a transactional provider + an
+  `inviteeEmail` field), with no model change.
+- **Roles — viewer / editor.** Stored per-member (`projects/{id}/members/{uid}.role`); enforced by
+  the backend on writes (editors add/remove papers; only the owner manages members or deletes the
+  project). Rules don't need roles — reads are member-or-not.
+- **Import-to-library follow.** A per-membership `importToLibrary` flag, prompted at bind/accept time
+  (default **true** for your own project, **false** for others'). When true, the project's papers are
+  backfilled into your `savedPapers` and newly-added ones keep flowing in (the add-paper handler fans
+  out to following members). **Follow only adds** — removing a paper from the project never yanks it
+  from a follower's library. This generalizes today's `projectPaper ⊆ savedPapers` invariant (which
+  is just the owner with `importToLibrary` effectively on).
+- **Visibility.** The `visibility` field is `"private"` for now; `"public"` (read-anyone via
+  `handle/id`) and Notion-style share-to-web slot in here later with a rules clause, no migration.
+
+None of this is built yet; it's recorded so the foundation choices above (top-level `projects`, the
+`memberUids` read gate, `handle/id` addressing, server-minted ids) are legible as deliberate prep.

@@ -1,7 +1,7 @@
 import * as path from "node:path";
 import { Command } from "commander";
 import { PaperBakerClient } from "@paper-baker/api-client";
-import { generateProjectId, type PaperMetadata } from "@paper-baker/core";
+import type { PaperMetadata, Project } from "@paper-baker/core";
 import {
   getApiUrl,
   loadProjectConfig,
@@ -58,6 +58,18 @@ function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/** The `handle/id` remote coordinate for display — falls back to `id` if no handle. */
+function remoteCoord(p: { id: string; ownerHandle?: string }): string {
+  return p.ownerHandle ? `${p.ownerHandle}/${p.id}` : p.id;
+}
+
+/** Split a bind target into `{ handle, id }`; a bare id has a null handle. */
+function parseTarget(target: string): { handle: string | null; id: string } {
+  const slash = target.indexOf("/");
+  if (slash === -1) return { handle: null, id: target };
+  return { handle: target.slice(0, slash), id: target.slice(slash + 1) };
+}
+
 // ---------------------------------------------------------------------------
 // create
 //
@@ -83,18 +95,18 @@ export async function runCreate(
   let published = false;
   if (token) {
     try {
-      const project = await makeClient(token).putProject(
-        generateProjectId(),
+      const project = await makeClient(token).createProject(
         projectName,
         "Created from the Paper Baker CLI",
       );
       saveProjectConfig({
         name: project.name,
-        slug: project.slug,
-        stableId: project.projectId,
+        id: project.id,
+        stableId: project.stableId,
+        ownerHandle: project.ownerHandle,
       });
       console.log(
-        `Created "${project.name}" (id: ${project.slug}) on the server.`,
+        `Created "${project.name}" (id: ${remoteCoord(project)}) on the server.`,
       );
       published = true;
     } catch (err) {
@@ -129,7 +141,7 @@ async function announceRootBrief(disabled: boolean): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function runBind(
-  slug: string,
+  target: string,
   opts: { merge?: boolean; replaceLocal?: boolean; brief?: boolean },
 ): Promise<void> {
   if (opts.merge && opts.replaceLocal) {
@@ -150,15 +162,22 @@ async function runBind(
 
   const client = await requireClientOrExit();
 
-  let project;
+  // A bare id resolves under your own account; `handle/id` resolves another
+  // owner's project (which today requires it to be shared with you).
+  const { handle, id } = parseTarget(target);
+  let project: Project;
   try {
-    project = await client.getProject(slug);
+    project = handle
+      ? await client.getProjectByHandle(handle, id)
+      : await client.getMyProjectById(id);
   } catch {
-    console.error(`Error: no project '${slug}' found on the server.`);
+    console.error(
+      `Error: no project '${target}' found (or it isn't shared with you).`,
+    );
     process.exit(1);
   }
 
-  const manifest = await client.getProjectManifest(project.projectId);
+  const manifest = await client.getProjectManifest(project.stableId);
   const remotePapers: PaperMetadata[] = manifest.papers.map(
     ({ projectPaper: _projectPaper, ...paper }) => paper,
   );
@@ -195,7 +214,7 @@ async function runBind(
   for (const paper of toPushToRemote) {
     try {
       await client.resolvePaper(paper.source);
-      await client.addPaperToProject(project.projectId, paper.paperId);
+      await client.addPaperToProject(project.stableId, paper.paperId);
       pushed++;
     } catch (err) {
       console.warn(`  Could not push ${paper.paperId} to remote: ${errMsg(err)}`);
@@ -205,13 +224,14 @@ async function runBind(
   savePapers(local);
   saveProjectConfig({
     name: project.name,
-    slug: project.slug,
-    stableId: project.projectId,
+    id: project.id,
+    stableId: project.stableId,
+    ownerHandle: project.ownerHandle,
   });
   rebuildArtifacts(local);
 
   console.log(
-    `Bound to "${project.name}" (id: ${project.slug}) via ${mode}.` +
+    `Bound to "${project.name}" (id: ${remoteCoord(project)}) via ${mode}.` +
       (pushed > 0 ? ` Pushed ${pushed} local paper(s) up.` : ""),
   );
 
@@ -233,11 +253,11 @@ async function runRename(name: string): Promise<void> {
 
   const client = await requireClientOrExit();
   // The stable id never changes, so the binding stays valid — we only rewrite
-  // the cached name/slug. If the remote update fails we throw before touching
+  // the cached name/id. If the remote update fails we throw before touching
   // anything local, keeping rename effectively atomic.
   const updated = await client.updateProject(cfg.stableId!, { name });
-  saveProjectConfig({ ...cfg, name: updated.name, slug: updated.slug });
-  console.log(`Renamed to "${updated.name}" (id: ${updated.slug}).`);
+  saveProjectConfig({ ...cfg, name: updated.name, id: updated.id, ownerHandle: updated.ownerHandle });
+  console.log(`Renamed to "${updated.name}" (id: ${remoteCoord(updated)}).`);
 }
 
 async function runDelete(opts: { yes?: boolean }): Promise<void> {
@@ -322,24 +342,24 @@ export function registerProjectCommands(program: Command): void {
         return;
       }
       for (const p of projects) {
-        const marker = p.projectId === boundId ? "*" : " ";
-        console.log(`${marker} ${p.slug}\t${p.name}\t${p.paperCount} paper(s)`);
+        const marker = p.stableId === boundId ? "*" : " ";
+        console.log(`${marker} ${remoteCoord(p)}\t${p.name}\t${p.paperCount} paper(s)`);
       }
     });
 
   project
     .command("bind")
     .description("Bind this directory to an existing remote project")
-    .argument("<id>", "Id of the project to bind")
+    .argument("<target>", "Project to bind: an id (your own), or handle/id (another owner's)")
     .option("--merge", "On drift, union local and remote papers")
     .option("--replace-local", "On drift, replace local state with the remote")
     .option("--no-brief", "Don't add a Paper Baker brief to the root AGENTS.md/CLAUDE.md")
     .action(
       async (
-        slug: string,
+        target: string,
         opts: { merge?: boolean; replaceLocal?: boolean; brief?: boolean },
       ) => {
-        await runBind(slug, opts);
+        await runBind(target, opts);
       },
     );
 

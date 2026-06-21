@@ -187,7 +187,8 @@ async function runLogin(
   work: string,
   extraEnv: Record<string, string> = {},
 ): Promise<{ stdout: string; stderr: string }> {
-  const child = execFileAsync("node", [cliEntry, "login", "--no-open"], {
+  // Browser-open is now opt-in (`--open`); the default no-open is what the test wants.
+  const child = execFileAsync("node", [cliEntry, "login"], {
     cwd: work,
     encoding: "utf8",
     timeout: 45_000,
@@ -214,7 +215,7 @@ describe("pb login (real binary, real device API, emulator)", () => {
       const work = mkdtempSync(join(tmpdir(), "pb-login-"));
       try {
         const { stdout, stderr } = await runLogin(cfg, work);
-        expect(stdout).toMatch(/Signed in \(uid: alice-uid\)/);
+        expect(stdout).toMatch(/Signed in as alice-uid/);
         // The approval URL the CLI printed must honor PAPERBAKER_WEB_URL (our
         // host), never the prod default — a regression guard for the stale
         // import-time default that once leaked the prod URL on the emulator.
@@ -266,7 +267,7 @@ describe("pb login (real binary, real device API, emulator)", () => {
         );
         const { stdout } = await runLogin(cfg, work);
         expect(stdout).toContain("Already signed in as prior-uid; re-authenticating.");
-        expect(stdout).toMatch(/Signed in \(uid: alice-uid\)/);
+        expect(stdout).toMatch(/Signed in as alice-uid/);
         // The stored token was actually replaced with the new one.
         const stored = JSON.parse(
           readFileSync(join(cfg, "config.json"), "utf8"),
@@ -291,7 +292,7 @@ describe("pb login (real binary, real device API, emulator)", () => {
         const { stdout, stderr } = await runLogin(cfg, work, {
           PAPERBAKER_TOKEN: "pbk.envconn.envsecret",
         });
-        expect(stdout).toMatch(/Signed in \(uid: alice-uid\)/);
+        expect(stdout).toMatch(/Signed in as alice-uid/);
         expect(stderr).toContain("PAPERBAKER_TOKEN is set in your environment");
         expect(stderr).toContain("overrides this login");
       } finally {

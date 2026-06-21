@@ -4,6 +4,7 @@ import {
   FieldValue,
   type CollectionReference,
   type DocumentSnapshot,
+  type Query,
 } from "firebase-admin/firestore";
 import type { Response } from "express";
 import type {
@@ -13,58 +14,74 @@ import type {
   PaperMetadata,
 } from "@paper-baker/core";
 import {
-  generateProjectId,
-  isValidProjectId,
+  generateStableId,
   slugify,
-  uniqueSlug,
+  uniqueProjectId,
 } from "@paper-baker/core";
 import { requireAuth } from "../middleware/auth.js";
 import { routePath } from "../lib/routePath.js";
+import { resolveHandle } from "../lib/handles.js";
 
 const db = () => getFirestore();
 
-/** A user's projects live under their own document: users/{uid}/projects/{id}. */
-const projectsCol = (uid: string): CollectionReference =>
-  db().collection("users").doc(uid).collection("projects");
+/** Projects are TOP-LEVEL and globally addressable: projects/{stableId}. */
+const projectsCol = (): CollectionReference =>
+  db().collection("projects");
+
+/** A project the caller may act on (owner or, later, a shared member), or null. */
+async function authorizedProject(
+  uid: string,
+  stableId: string,
+): Promise<DocumentSnapshot | null> {
+  const snap = await projectsCol().doc(stableId).get();
+  if (!snap.exists) return null;
+  const data = snap.data() as Project;
+  if (!Array.isArray(data.memberUids) || !data.memberUids.includes(uid)) {
+    return null;
+  }
+  return snap;
+}
 
 /**
- * Resolve a project by its stable id OR its slug (id wins when both match).
- * Returns the snapshot, or null if neither hits.
+ * Resolve a project by `handle/id` (cross-user) or by `id` alone (the caller's
+ * own). Returns the snapshot only if the caller is a member, else null — so a
+ * non-member can't tell "not found" from "not allowed".
  */
-async function resolveProject(
-  uid: string,
-  idOrSlug: string,
+async function resolveByHandleId(
+  callerUid: string,
+  handle: string | null,
+  id: string,
 ): Promise<DocumentSnapshot | null> {
-  const byId = await projectsCol(uid).doc(idOrSlug).get();
-  if (byId.exists) return byId;
-  const bySlug = await projectsCol(uid)
-    .where("slug", "==", idOrSlug)
+  const ownerUid = handle === null ? callerUid : await resolveHandle(handle);
+  if (!ownerUid) return null;
+  const q = await projectsCol()
+    .where("ownerUid", "==", ownerUid)
+    .where("id", "==", id)
     .limit(1)
     .get();
-  return bySlug.empty ? null : bySlug.docs[0];
+  if (q.empty) return null;
+  const snap = q.docs[0];
+  const data = snap.data() as Project;
+  return data.memberUids?.includes(callerUid) ? snap : null;
 }
 
 /**
  * Projects API — single onRequest handler with URL-based routing.
  *
- * All routes are implicitly scoped to the authenticated user's
- * users/{uid}/projects subtree. `:id` accepts the stable id or the slug.
+ * Routes (all membership-gated; writes go through here, never client Firestore):
+ *   POST   /                       — create (server-mints stableId + owner-unique id)
+ *   GET    /                       — list projects the caller is a member of
+ *   GET    /lookup/:id             — resolve the caller's own project by id
+ *   GET    /lookup/:handle/:id     — resolve handle/id (another owner's, if shared)
+ *   GET    /:stableId              — get a single project
+ *   PATCH  /:stableId              — update (name re-derives the id; description)
+ *   DELETE /:stableId              — delete the project and its projectPapers
+ *   POST   /:stableId/papers       — file a paper into the project
+ *   DELETE /:stableId/papers/:pid  — unfile a paper
+ *   GET    /:stableId/manifest     — full manifest (project + papers + metadata)
  *
- * Routes:
- *   POST   /                    — create project (mints stable id + unique slug)
- *   GET    /                    — list the caller's projects
- *   GET    /:id                 — get single project (by id or slug)
- *   PUT    /:id                 — idempotent create-with-id (CLI publish/sync)
- *   PATCH  /:id                 — update project (name re-slugs; description)
- *   DELETE /:id                 — delete project and its items subcollection
- *   POST   /:id/papers          — add paper to project
- *   DELETE /:id/papers/:paperId — remove paper from project
- *   GET    /:id/manifest        — full project manifest (project + items + metadata)
- */
-/**
- * The projects API request handler. Exported (separately from the onRequest
- * wrapper) so integration tests can drive it directly against the Firestore
- * emulator with mock req/res, no HTTP layer needed.
+ * Exported separately from the onRequest wrapper so integration tests can drive
+ * it directly against the Firestore emulator with mock req/res.
  */
 export async function handleProjectsRequest(
   req: Request,
@@ -80,79 +97,56 @@ export async function handleProjectsRequest(
   }
 
   const path = routePath(req.path, "/api/projects");
-  const segments = path.split("/").filter(Boolean);
+  const segments = path.split("/").filter(Boolean).map((s) => decodeURIComponent(s));
 
   try {
-    // POST / — create project
     if (req.method === "POST" && segments.length === 0) {
       await handleCreateProject(uid, req, res);
       return;
     }
-
-    // GET / — list projects
     if (req.method === "GET" && segments.length === 0) {
       await handleListProjects(uid, res);
       return;
     }
 
-    // Routes with /:id
+    // Handle/id resolution. /lookup/:id (own) or /lookup/:handle/:id (cross-user).
+    if (req.method === "GET" && segments[0] === "lookup") {
+      if (segments.length === 2) {
+        await handleResolve(uid, null, segments[1], res);
+        return;
+      }
+      if (segments.length === 3) {
+        await handleResolve(uid, segments[1], segments[2], res);
+        return;
+      }
+    }
+
     if (segments.length >= 1) {
-      const idOrSlug = decodeURIComponent(segments[0]);
+      const stableId = segments[0];
 
-      // GET /:id/manifest
-      if (
-        req.method === "GET" &&
-        segments.length === 2 &&
-        segments[1] === "manifest"
-      ) {
-        await handleGetManifest(uid, idOrSlug, res);
+      if (req.method === "GET" && segments.length === 2 && segments[1] === "manifest") {
+        await handleGetManifest(uid, stableId, res);
         return;
       }
-
-      // POST /:id/papers — add paper
-      if (
-        req.method === "POST" &&
-        segments.length === 2 &&
-        segments[1] === "papers"
-      ) {
-        await handleAddPaper(uid, idOrSlug, req, res);
+      if (req.method === "POST" && segments.length === 2 && segments[1] === "papers") {
+        await handleAddPaper(uid, stableId, req, res);
         return;
       }
-
-      // DELETE /:id/papers/:paperId — remove paper
-      if (
-        req.method === "DELETE" &&
-        segments.length >= 3 &&
-        segments[1] === "papers"
-      ) {
-        const paperId = decodeURIComponent(segments.slice(2).join("/"));
-        await handleRemovePaper(uid, idOrSlug, paperId, res);
+      if (req.method === "DELETE" && segments.length >= 3 && segments[1] === "papers") {
+        const paperId = segments.slice(2).join("/");
+        await handleRemovePaper(uid, stableId, paperId, res);
         return;
       }
-
-      // GET /:id — get project
       if (req.method === "GET" && segments.length === 1) {
-        await handleGetProject(uid, idOrSlug, res);
+        await handleGetProject(uid, stableId, res);
         return;
       }
-
-      // PUT /:id — idempotent create-with-id (CLI publish/sync). Unlike POST,
-      // the client supplies the stable id, so the same project can be created
-      // under multiple accounts (each scoped to its own users/{uid} subtree).
-      if (req.method === "PUT" && segments.length === 1) {
-        await handleUpsertProject(uid, idOrSlug, req, res);
-        return;
-      }
-
-      // PATCH /:id — update project
       if (req.method === "PATCH" && segments.length === 1) {
-        await handleUpdateProject(uid, idOrSlug, req, res);
+        await handleUpdateProject(uid, stableId, req, res);
         return;
       }
-
-      // DELETE /:id — delete project
       if (req.method === "DELETE" && segments.length === 1) {
-        await handleDeleteProject(uid, idOrSlug, res);
+        await handleDeleteProject(uid, stableId, res);
         return;
       }
     }
@@ -172,130 +166,90 @@ export const projectsApi = onRequest({ cors: true, invoker: "public" }, handlePr
 // Route handlers
 // ---------------------------------------------------------------------------
 
-async function handleCreateProject(uid: string, req: Request, res: Response) {
-  const { name, description } = req.body as {
-    name?: string;
-    description?: string;
-  };
+/** The owner's handle, denormalized onto the project for display. "" if unset. */
+async function ownerHandleOf(uid: string): Promise<string> {
+  const snap = await db().collection("users").doc(uid).get();
+  return (snap.data()?.handle as string | undefined) ?? "";
+}
 
+/** Collect the user-facing ids already used by this owner (for uniqueness). */
+function takenIds(q: FirebaseFirestore.QuerySnapshot, exceptStableId?: string): Set<string> {
+  const ids = new Set<string>();
+  q.forEach((d) => {
+    if (exceptStableId && d.id === exceptStableId) return;
+    const v = (d.data() as Project).id;
+    if (v) ids.add(v);
+  });
+  return ids;
+}
+
+async function handleCreateProject(uid: string, req: Request, res: Response) {
+  const { name, description } = req.body as { name?: string; description?: string };
   if (!name || typeof name !== "string") {
     res.status(400).json({ error: "name is required" });
     return;
   }
 
   const now = new Date().toISOString();
-  const col = projectsCol(uid);
+  const ownerHandle = await ownerHandleOf(uid);
+  const ownerProjects: Query = projectsCol().where("ownerUid", "==", uid);
 
-  // One transaction: read the user's existing ids+slugs, then mint a unique id
-  // and slug and write. The collection is tiny (<~20), so reading it whole is
-  // cheap and makes uniqueness race-free.
+  // One transaction: read the owner's existing ids (for a unique user-facing id),
+  // mint a globally-unique stableId, then write.
   const project = await db().runTransaction(async (tx) => {
-    const snap = await tx.get(col);
-    const slugs = new Set<string>();
-    const ids = new Set<string>();
-    snap.forEach((d) => {
-      ids.add(d.id);
-      const s = (d.data() as Project).slug;
-      if (s) slugs.add(s);
-    });
+    const mine = await tx.get(ownerProjects);
+    const ids = takenIds(mine);
 
-    let id = generateProjectId();
-    for (let guard = 0; ids.has(id) && guard < 50; guard++) {
-      id = generateProjectId();
+    let stableId = generateStableId();
+    for (let guard = 0; guard < 50; guard++) {
+      const existing = await tx.get(projectsCol().doc(stableId));
+      if (!existing.exists) break;
+      stableId = generateStableId();
     }
-    // Fall back to the (clean, typeable) stable id when the name has nothing
-    // slug-able — e.g. an all-emoji name — rather than a colliding "untitled".
-    const slug = uniqueSlug(slugify(name) || id, slugs);
 
+    const id = uniqueProjectId(slugify(name) || stableId, ids);
     const p: Project = {
-      projectId: id,
-      slug,
+      stableId,
+      id,
       name,
       description: description ?? "",
       ownerUid: uid,
+      ownerHandle,
+      memberUids: [uid],
+      visibility: "private",
       createdAt: now,
       updatedAt: now,
       paperCount: 0,
     };
-    tx.set(col.doc(id), p);
+    tx.set(projectsCol().doc(stableId), p);
     return p;
   });
 
   res.status(201).json(project);
 }
 
-async function handleUpsertProject(
-  uid: string,
-  id: string,
-  req: Request,
-  res: Response,
-) {
-  const { name, description } = req.body as {
-    name?: string;
-    description?: string;
-  };
-
-  if (!name || typeof name !== "string") {
-    res.status(400).json({ error: "name is required" });
-    return;
-  }
-  // The client owns the id, so validate its shape rather than minting one. A
-  // slug would also resolve a project for GET, but creating one requires a real
-  // stable id — reject anything else so we never write a slug-shaped doc id.
-  if (!isValidProjectId(id)) {
-    res.status(400).json({ error: "invalid project id" });
-    return;
-  }
-
-  const now = new Date().toISOString();
-  const col = projectsCol(uid);
-
-  // Idempotent: if the id already exists under this account, return it untouched
-  // (a re-sync). Otherwise mint a unique slug and create it. Reading the whole
-  // (tiny) collection in the transaction keeps slug uniqueness race-free.
-  const { project, created } = await db().runTransaction(async (tx) => {
-    const ref = col.doc(id);
-    const existing = await tx.get(ref);
-    if (existing.exists) {
-      return { project: existing.data() as Project, created: false };
-    }
-
-    const snap = await tx.get(col);
-    const slugs = new Set<string>();
-    snap.forEach((d) => {
-      const s = (d.data() as Project).slug;
-      if (s) slugs.add(s);
-    });
-
-    const p: Project = {
-      projectId: id,
-      slug: uniqueSlug(slugify(name) || id, slugs),
-      name,
-      description: description ?? "",
-      ownerUid: uid,
-      createdAt: now,
-      updatedAt: now,
-      paperCount: 0,
-    };
-    tx.set(ref, p);
-    return { project: p, created: true };
-  });
-
-  res.status(created ? 201 : 200).json(project);
-}
-
 async function handleListProjects(uid: string, res: Response) {
-  const snapshot = await projectsCol(uid).get();
+  const snapshot = await projectsCol().where("memberUids", "array-contains", uid).get();
   const projects = snapshot.docs.map((doc) => doc.data() as Project);
   res.status(200).json(projects);
 }
 
-async function handleGetProject(
+async function handleResolve(
   uid: string,
-  idOrSlug: string,
+  handle: string | null,
+  id: string,
   res: Response,
 ) {
-  const snap = await resolveProject(uid, idOrSlug);
+  const snap = await resolveByHandleId(uid, handle, id);
+  if (!snap) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+  res.status(200).json(snap.data() as Project);
+}
+
+async function handleGetProject(uid: string, stableId: string, res: Response) {
+  const snap = await authorizedProject(uid, stableId);
   if (!snap) {
     res.status(404).json({ error: "Project not found" });
     return;
@@ -305,44 +259,28 @@ async function handleGetProject(
 
 async function handleUpdateProject(
   uid: string,
-  idOrSlug: string,
+  stableId: string,
   req: Request,
   res: Response,
 ) {
-  const { name, description } = req.body as {
-    name?: string;
-    description?: string;
-  };
-  const col = projectsCol(uid);
+  const { name, description } = req.body as { name?: string; description?: string };
 
   const updated = await db().runTransaction(async (tx) => {
-    // Resolve inside the transaction (by id, then slug).
-    let ref = col.doc(idOrSlug);
-    let snap = await tx.get(ref);
-    if (!snap.exists) {
-      const q = await tx.get(col.where("slug", "==", idOrSlug).limit(1));
-      if (q.empty) return null;
-      snap = q.docs[0];
-      ref = snap.ref;
-    }
-
+    const ref = projectsCol().doc(stableId);
+    const snap = await tx.get(ref);
+    if (!snap.exists) return null;
     const project = snap.data() as Project;
-    const updates: Record<string, unknown> = {
-      updatedAt: new Date().toISOString(),
-    };
+    if (!project.memberUids?.includes(uid)) return null;
+
+    const updates: Record<string, unknown> = { updatedAt: new Date().toISOString() };
     if (description !== undefined) updates.description = description;
 
-    // Renaming re-slugs, staying unique among the user's *other* projects.
+    // Renaming re-derives the id, staying unique among the OWNER's other projects.
     if (typeof name === "string" && name.length > 0 && name !== project.name) {
       updates.name = name;
-      const all = await tx.get(col);
-      const slugs = new Set<string>();
-      all.forEach((d) => {
-        if (d.id === ref.id) return;
-        const s = (d.data() as Project).slug;
-        if (s) slugs.add(s);
-      });
-      updates.slug = uniqueSlug(slugify(name) || ref.id, slugs);
+      const mine = await tx.get(projectsCol().where("ownerUid", "==", project.ownerUid));
+      const ids = takenIds(mine, stableId);
+      updates.id = uniqueProjectId(slugify(name) || stableId, ids);
     }
 
     tx.update(ref, updates);
@@ -356,23 +294,16 @@ async function handleUpdateProject(
   res.status(200).json(updated);
 }
 
-async function handleDeleteProject(
-  uid: string,
-  idOrSlug: string,
-  res: Response,
-) {
-  const snap = await resolveProject(uid, idOrSlug);
+async function handleDeleteProject(uid: string, stableId: string, res: Response) {
+  const snap = await authorizedProject(uid, stableId);
   if (!snap) {
     res.status(404).json({ error: "Project not found" });
     return;
   }
 
-  // Delete all membership docs in the subcollection, then the project doc.
   const membershipSnapshot = await snap.ref.collection("projectPapers").get();
   const batch = db().batch();
-  for (const memberDoc of membershipSnapshot.docs) {
-    batch.delete(memberDoc.ref);
-  }
+  for (const memberDoc of membershipSnapshot.docs) batch.delete(memberDoc.ref);
   batch.delete(snap.ref);
   await batch.commit();
 
@@ -381,29 +312,27 @@ async function handleDeleteProject(
 
 async function handleAddPaper(
   uid: string,
-  idOrSlug: string,
+  stableId: string,
   req: Request,
   res: Response,
 ) {
   const { paperId } = req.body as { paperId?: string };
-
   if (!paperId || typeof paperId !== "string") {
     res.status(400).json({ error: "paperId is required" });
     return;
   }
 
-  const projectSnap = await resolveProject(uid, idOrSlug);
+  const projectSnap = await authorizedProject(uid, stableId);
   if (!projectSnap) {
     res.status(404).json({ error: "Project not found" });
     return;
   }
+  const project = projectSnap.data() as Project;
 
-  // Verify the paper exists in the global papers collection
+  // Verify the paper exists in the global papers collection.
   const paperDoc = await db().collection("papers").doc(paperId).get();
   if (!paperDoc.exists) {
-    res
-      .status(404)
-      .json({ error: "Paper not found. Resolve it first via the papers API." });
+    res.status(404).json({ error: "Paper not found. Resolve it first via the papers API." });
     return;
   }
 
@@ -415,23 +344,17 @@ async function handleAddPaper(
   }
 
   const now = new Date().toISOString();
-  // ownerUid is denormalized so web collectionGroup reads can scope to the user.
+  // memberUids mirrors the project so the collectionGroup read authorizes on it.
   const projectPaper: ProjectPaper = {
     paperId,
-    projectId: projectSnap.id,
-    ownerUid: uid,
+    projectStableId: stableId,
+    memberUids: project.memberUids,
     addedAt: now,
   };
 
-  // Every projectPaper implies a savedPapers entry — filing a paper also saves
-  // it to the user's library (matching the web). The thin record carries only
-  // the id + savedAt; metadata stays in the global papers/ cache. Don't clobber
-  // an existing savedAt on re-filing.
-  const savedRef = db()
-    .collection("users")
-    .doc(uid)
-    .collection("savedPapers")
-    .doc(paperId);
+  // Every projectPaper implies a savedPapers entry for the acting user — filing a
+  // paper also saves it to their library. Don't clobber an existing savedAt.
+  const savedRef = db().collection("users").doc(uid).collection("savedPapers").doc(paperId);
   const savedSnap = await savedRef.get();
 
   const batch = db().batch();
@@ -448,11 +371,11 @@ async function handleAddPaper(
 
 async function handleRemovePaper(
   uid: string,
-  idOrSlug: string,
+  stableId: string,
   paperId: string,
   res: Response,
 ) {
-  const projectSnap = await resolveProject(uid, idOrSlug);
+  const projectSnap = await authorizedProject(uid, stableId);
   if (!projectSnap) {
     res.status(404).json({ error: "Project not found" });
     return;
@@ -477,27 +400,17 @@ async function handleRemovePaper(
   res.status(200).json({ deleted: true });
 }
 
-async function handleGetManifest(
-  uid: string,
-  idOrSlug: string,
-  res: Response,
-) {
-  const projectSnap = await resolveProject(uid, idOrSlug);
+async function handleGetManifest(uid: string, stableId: string, res: Response) {
+  const projectSnap = await authorizedProject(uid, stableId);
   if (!projectSnap) {
     res.status(404).json({ error: "Project not found" });
     return;
   }
   const project = projectSnap.data() as Project;
 
-  // Fetch all membership docs
-  const membershipSnapshot = await projectSnap.ref
-    .collection("projectPapers")
-    .get();
-  const projectPapers = membershipSnapshot.docs.map(
-    (doc) => doc.data() as ProjectPaper,
-  );
+  const membershipSnapshot = await projectSnap.ref.collection("projectPapers").get();
+  const projectPapers = membershipSnapshot.docs.map((doc) => doc.data() as ProjectPaper);
 
-  // Fetch all referenced papers in parallel
   const paperIds = projectPapers.map((pp) => pp.paperId);
   const paperDocs = await Promise.all(
     paperIds.map((id) => db().collection("papers").doc(id).get()),
@@ -505,23 +418,18 @@ async function handleGetManifest(
 
   const papersMap = new Map<string, PaperMetadata>();
   for (const doc of paperDocs) {
-    if (doc.exists) {
-      papersMap.set(doc.id, doc.data() as PaperMetadata);
-    }
+    if (doc.exists) papersMap.set(doc.id, doc.data() as PaperMetadata);
   }
 
-  // Join each membership with its paper metadata
   const papers = projectPapers
     .filter((pp) => papersMap.has(pp.paperId))
-    .map((pp) => ({
-      ...papersMap.get(pp.paperId)!,
-      projectPaper: pp,
-    }));
+    .map((pp) => ({ ...papersMap.get(pp.paperId)!, projectPaper: pp }));
 
   const manifest: ProjectManifest = {
-    projectId: project.projectId,
-    slug: project.slug,
+    stableId: project.stableId,
+    id: project.id,
     name: project.name,
+    ownerHandle: project.ownerHandle,
     papers,
   };
 

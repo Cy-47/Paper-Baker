@@ -15,6 +15,10 @@
       { "source": "/api/papers/**", "function": "papersApi" },
       { "source": "/api/library", "function": "libraryApi" },
       { "source": "/api/library/**", "function": "libraryApi" },
+      { "source": "/api/me", "function": "usersApi" },
+      { "source": "/api/me/**", "function": "usersApi" },
+      { "source": "/api/users", "function": "usersApi" },
+      { "source": "/api/users/**", "function": "usersApi" },
       { "source": "**", "destination": "/index.html" }
     ]
   },

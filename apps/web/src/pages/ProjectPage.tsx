@@ -12,19 +12,22 @@ const iconLink =
   "inline-flex h-8 w-8 items-center justify-center rounded-md text-[var(--muted)] no-underline hover:bg-[var(--background-secondary)] hover:text-[var(--accent)]";
 
 export default function ProjectPage() {
-  const { slug = "" } = useParams();
+  const { stableId: routeStableId = "" } = useParams();
   const { projects, papersIn, loading } = useData();
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [copied, setCopied] = useState(false);
 
-  const project = projects.find((p) => p.slug === slug);
-  // Papers are filed against the stable projectId, not the URL slug.
-  const id = project?.projectId ?? "";
-  const papers = papersIn(id);
+  // The URL path carries the immutable `stableId` (the human `id` is re-derived
+  // from the name on every rename, so it can't be the route key). Resolve it to
+  // the project and use `stableId` for every data op.
+  const project = projects.find((p) => p.stableId === routeStableId);
+  const stableId = project?.stableId ?? "";
+  const papers = papersIn(stableId);
 
-  const bindCmd = project ? `pb project bind ${project.slug}` : "";
+  // A bare id binds under the caller's own account (DESIGN §5.2).
+  const bindCmd = project ? `pb project bind ${project.id}` : "";
   const copyBindCmd = () => {
     navigator.clipboard?.writeText(bindCmd).then(() => {
       setCopied(true);
@@ -39,7 +42,7 @@ export default function ProjectPage() {
 
   const saveRename = async () => {
     const name = draft.trim();
-    if (name && name !== project?.name) await renameProject(id, name);
+    if (name && name !== project?.name) await renameProject(stableId, name);
     setEditing(false);
   };
 
@@ -55,7 +58,7 @@ export default function ProjectPage() {
   }
 
   const removeFromProject = (paperId: string) => {
-    removePaperFromProject(id, paperId);
+    removePaperFromProject(stableId, paperId);
   };
 
   return (
@@ -118,7 +121,7 @@ export default function ProjectPage() {
         </Button>
       </div>
 
-      {adding && <AddPaperModal projectId={id} onClose={() => setAdding(false)} />}
+      {adding && <AddPaperModal stableId={stableId} onClose={() => setAdding(false)} />}
 
       {papers.length === 0 ? (
         <p className="mt-8 text-sm text-[var(--muted)]">
@@ -139,7 +142,7 @@ export default function ProjectPage() {
                 </>
               }
               chips={
-                <ProjectChips projectIds={(i.projectIds ?? []).filter((p) => p !== id)} />
+                <ProjectChips projectIds={(i.projectIds ?? []).filter((p) => p !== stableId)} />
               }
               actions={
                 <>

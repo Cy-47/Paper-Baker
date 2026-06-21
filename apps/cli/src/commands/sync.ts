@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { Command } from "commander";
 import type { PaperMetadata } from "@paper-baker/core";
-import { generateProjectId, renderBibtexFile } from "@paper-baker/core";
+import { renderBibtexFile } from "@paper-baker/core";
 import { PaperBakerClient } from "@paper-baker/api-client";
 import {
   getApiUrl,
@@ -137,11 +137,11 @@ async function ensureSourcesAndArtifacts(
 }
 
 /**
- * Publish + reconcile against the server. Mints a stable id on first sync,
- * upsert-creates the project under the account (which also covers syncing onto
- * a new account that doesn't have it yet), pushes local-only papers up, then
- * unions the server's papers back down. Persists the binding and returns the
- * merged paper set. A network failure degrades to local-only (returns local).
+ * Publish + reconcile against the server. On first publish the server creates the
+ * project (minting its stableId + id); thereafter we reconcile the bound project.
+ * Pushes local-only papers up, then unions the server's papers back down. Persists
+ * the binding and returns the merged paper set. A network failure (or a project
+ * the caller can't reach) degrades to local-only (returns local).
  */
 async function syncWithServer(
   token: string,
@@ -155,22 +155,33 @@ async function syncWithServer(
   const notify = (m: string) => console.warn(m);
 
   const client = new PaperBakerClient({ baseUrl: getApiUrl(), token });
-  // The id is client-owned, so it stays constant across accounts. Absent ⇒ this
-  // is the first publish; mint one now.
-  const stableId = cfg.stableId ?? generateProjectId();
   const firstPublish = cfg.stableId === undefined;
 
-  let project;
+  // First publish creates the server project (server-minted stableId + id).
+  let stableId = cfg.stableId;
+  if (firstPublish) {
+    try {
+      const created = await client.createProject(
+        cfg.name,
+        "Synced from the Paper Baker CLI",
+      );
+      stableId = created.stableId;
+    } catch (err) {
+      if (!quiet) {
+        console.warn(
+          `Could not reach the server (${errMsg(err)}). Syncing local state only.`,
+        );
+      }
+      return localPapers;
+    }
+  }
+
+  // The manifest carries the project's current name/id/ownerHandle plus its
+  // papers — one round-trip to read everything we reconcile against.
+  let manifest;
   try {
-    project = await client.putProject(
-      stableId,
-      cfg.name,
-      "Synced from the Paper Baker CLI",
-    );
+    manifest = await client.getProjectManifest(stableId!);
   } catch (err) {
-    // Transient unreachable: keep local state and degrade gracefully. A quiet
-    // auto-sync stays silent — the command already did its job locally, and a
-    // later online command (or explicit `pb sync`) will reconcile.
     if (!quiet) {
       console.warn(
         `Could not reach the server (${errMsg(err)}). Syncing local state only.`,
@@ -180,7 +191,6 @@ async function syncWithServer(
   }
 
   // Union local with the server's papers; push the local-only ones up.
-  const manifest = await client.getProjectManifest(stableId);
   const remotePapers: PaperMetadata[] = manifest.papers.map(
     ({ projectPaper: _projectPaper, ...paper }) => paper,
   );
@@ -196,7 +206,7 @@ async function syncWithServer(
       // Resolve into the global papers/ cache first — addPaperToProject 404s for
       // a paper the backend hasn't seen yet. Idempotent once cached.
       await client.resolvePaper(paper.source);
-      await client.addPaperToProject(stableId, paper.paperId);
+      await client.addPaperToProject(stableId!, paper.paperId);
       pushed++;
     } catch (err) {
       // A failed push is real drift — surface it even in quiet mode.
@@ -206,14 +216,19 @@ async function syncWithServer(
 
   savePapers(merged);
   // Preserve the one-time root-brief decision across the re-save.
-  saveProjectConfig({ ...cfg, name: project.name, slug: project.slug, stableId });
+  saveProjectConfig({
+    ...cfg,
+    name: manifest.name,
+    id: manifest.id,
+    stableId,
+    ownerHandle: manifest.ownerHandle,
+  });
 
+  const coord = manifest.ownerHandle ? `${manifest.ownerHandle}/${manifest.id}` : manifest.id;
   // A first publish only ever happens through an explicit `pb sync` — the quiet
   // auto-sync bails on unbound projects before reaching here.
   if (firstPublish) {
-    info(
-      `Published as "${project.name}" (id: ${project.slug}); pushed ${pushed} paper(s).`,
-    );
+    info(`Published as "${manifest.name}" (id: ${coord}); pushed ${pushed} paper(s).`);
   } else {
     info(`Synced with server: pushed ${pushed}, ${merged.length} paper(s) total.`);
   }

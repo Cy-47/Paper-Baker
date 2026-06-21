@@ -109,21 +109,25 @@ export function getApiUrl(): string {
 export const PROJECT_DIR = "paperbaker";
 
 /**
- * A project is offline until it's first synced. Identity is split in two:
- *   - `name`     — always present; what the project is called locally.
- *   - `stableId` — the durable server key, minted on first `pb sync`. Its mere
- *                  presence is the binding: set ⇔ this project syncs with the
- *                  server. There is no offline-id sentinel.
- *   - `slug`     — the server's human handle (set alongside stableId on sync);
- *                  what users type for `pb project bind`.
- *   - `rootBrief`— records the one-time decision about the root agent brief (see
- *                  helpers/root-brief.ts): "added" once injected, "declined" if
- *                  the user opted out. Its presence means "don't ask again".
+ * A project is offline until it's first synced. Identity is split:
+ *   - `name`      — always present; what the project is called locally.
+ *   - `stableId`  — the durable, server-minted key the binding is keyed on. Its
+ *                   mere presence is the binding: set ⇔ this project syncs with
+ *                   the server. There is no offline-id sentinel.
+ *   - `id`        — the project's user-facing, renamable identifier (the `id` in
+ *                   `handle/id`), cached for display. Refreshed on sync.
+ *   - `ownerHandle` — the owner's handle, cached for display so the directory can
+ *                   show its `handle/id` remote. Refreshed on sync. The binding
+ *                   never depends on `id`/`ownerHandle` — only on `stableId`.
+ *   - `rootBrief` — records the one-time decision about the root agent brief (see
+ *                   helpers/root-brief.ts): "added" once injected, "declined" if
+ *                   the user opted out. Its presence means "don't ask again".
  */
 export interface ProjectConfig {
   name: string;
   stableId?: string;
-  slug?: string;
+  id?: string;
+  ownerHandle?: string;
   rootBrief?: "added" | "declined";
 }
 

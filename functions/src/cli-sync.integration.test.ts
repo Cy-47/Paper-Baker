@@ -21,7 +21,7 @@ import { mintAccessToken } from "./lib/cliSessions.js";
 // Nothing here is mocked except that we stand the handler behind a bare http
 // server instead of Cloud Functions hosting (the URL routing is identical).
 //
-// NOTE: `pb push` resolves each paper into the global papers/ cache
+// NOTE: `pb sync` resolves each paper into the global papers/ cache
 // (api-client.resolvePaper) before filing it. We pre-seed papers/ here so that
 // resolve is a cache hit and the test stays hermetic (no live arxiv fetch).
 
@@ -198,27 +198,26 @@ describe("pb ↔ backend sync (real binary, real handler, emulator)", () => {
     const work = mkdtempSync(join(tmpdir(), "pb-sync-"));
     const cfg = mkdtempSync(join(tmpdir(), "pb-cfg-"));
     try {
-      // Logged in, so `create` reaches the server now: mints a stable id and
-      // creates the project via the upsert endpoint — synced from birth.
+      // Logged in, so `create` reaches the server now: the server mints the
+      // stableId + id and creates the project — synced from birth.
       const created = await pb(["project", "create", "Sync Test"], work, token, cfg);
       expect(created).toMatch(/Created "Sync Test"/);
-      expect(created).toMatch(/slug: sync-test/);
+      expect(created).toMatch(/id: sync-test/);
 
-      // The CLI persisted the server binding (stable id + slug) into config.json.
+      // The CLI persisted the server binding (stableId + id) into config.json.
       const localCfg = JSON.parse(
         readFileSync(join(work, "paperbaker", "config.json"), "utf8"),
-      ) as { name: string; stableId?: string; slug?: string };
-      expect(localCfg.slug).toBe("sync-test");
-      expect(localCfg.stableId).toMatch(/^[2-9a-z]{4}$/);
+      ) as { name: string; stableId?: string; id?: string };
+      expect(localCfg.id).toBe("sync-test");
+      expect(localCfg.stableId).toMatch(/^[2-9a-z]{8}$/);
 
-      // The server holds the project at that exact (client-owned) id already,
-      // before any sync.
+      // The server holds the (top-level) project already, before any sync.
       const db = getFirestore();
-      const projects = await db.collection("users").doc(ALICE).collection("projects").get();
+      const projects = await db.collection("projects").where("ownerUid", "==", ALICE).get();
       expect(projects.size).toBe(1);
       const projectId = projects.docs[0].id;
       expect(projectId).toBe(localCfg.stableId);
-      expect(projects.docs[0].data().slug).toBe("sync-test");
+      expect(projects.docs[0].data().id).toBe("sync-test");
 
       // Seed the paper list directly (no arxiv round-trip), then sync pushes it.
       writeFileSync(
@@ -230,7 +229,6 @@ describe("pb ↔ backend sync (real binary, real handler, emulator)", () => {
 
       // The membership AND the saved record (projectPaper ⊆ savedPapers) landed.
       const membership = await db
-        .collection("users").doc(ALICE)
         .collection("projects").doc(projectId)
         .collection("projectPapers").doc(PAPER.paperId)
         .get();
@@ -285,12 +283,11 @@ describe("pb ↔ backend sync (real binary, real handler, emulator)", () => {
 
       const after = JSON.parse(
         readFileSync(join(work, "paperbaker", "config.json"), "utf8"),
-      ) as { stableId?: string; slug?: string };
-      expect(after.slug).toBe("sync-test");
-      expect(after.stableId).toMatch(/^[2-9a-z]{4}$/);
+      ) as { stableId?: string; id?: string };
+      expect(after.id).toBe("sync-test");
+      expect(after.stableId).toMatch(/^[2-9a-z]{8}$/);
 
       const membership = await getFirestore()
-        .collection("users").doc(ALICE)
         .collection("projects").doc(after.stableId!)
         .collection("projectPapers").doc(PAPER.paperId)
         .get();
