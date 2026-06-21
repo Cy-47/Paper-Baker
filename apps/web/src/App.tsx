@@ -3,6 +3,7 @@ import { useAuth } from "./hooks/useAuth";
 import { DataProvider } from "./hooks/useData";
 import { SavePanelProvider } from "./hooks/useSavePanel";
 import AppShell from "./components/AppShell";
+import OnboardingGate from "./components/OnboardingGate";
 import LoginPage from "./pages/LoginPage";
 import LandingPage from "./pages/LandingPage";
 import QuickstartPage from "./pages/QuickstartPage";
@@ -28,11 +29,13 @@ function Protected() {
   if (loading) return <Loading />;
   if (!user) return <Navigate to="/login" replace />;
   return (
-    <DataProvider>
-      <SavePanelProvider>
-        <AppShell />
-      </SavePanelProvider>
-    </DataProvider>
+    <OnboardingGate>
+      <DataProvider>
+        <SavePanelProvider>
+          <AppShell />
+        </SavePanelProvider>
+      </DataProvider>
+    </OnboardingGate>
   );
 }
 
@@ -57,7 +60,7 @@ export default function App() {
         <Route path="/home" element={<HomePage />} />
         <Route path="/find" element={<FindPage />} />
         <Route path="/library" element={<LibraryPage />} />
-        <Route path="/projects/:slug" element={<ProjectPage />} />
+        <Route path="/projects/:stableId" element={<ProjectPage />} />
         <Route path="/clis" element={<CliSettingsPage />} />
       </Route>
     </Routes>

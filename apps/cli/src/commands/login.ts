@@ -1,6 +1,8 @@
 import { Command } from "commander";
 import { loadGlobalConfig, saveGlobalConfig, getApiUrl } from "../config.js";
 import { deviceLogin } from "../helpers/auth.js";
+import { isInteractive, promptLine } from "../helpers/prompt.js";
+import { bold, tick } from "../helpers/style.js";
 
 function envTokenSet(): boolean {
   return !!process.env["PAPERBAKER_TOKEN"]?.trim();
@@ -10,7 +12,7 @@ export function registerLoginCommands(program: Command): void {
   program
     .command("login")
     .description("Sign in through your browser (device link)")
-    .option("--open", "Open the verification URL in your browser automatically")
+    .option("--open", "Open the verification URL immediately (skip the Enter prompt)")
     .action(async (opts: { open?: boolean }) => {
       // Idempotent re-auth: tell the user they're replacing an existing session
       // (non-blocking — no prompt, since this CLI is driven by agents too).
@@ -22,9 +24,24 @@ export function registerLoginCommands(program: Command): void {
       }
       try {
         const { uid } = await deviceLogin({
-          openBrowser: opts.open === true && !!process.stdout.isTTY,
+          openBrowser: async (url) => {
+            // --open: open straight away, no keypress. Agents/CI (no TTY): never
+            // block on stdin and never open — just print the URL. Interactive
+            // default (gh-style): offer to open on Enter so the user can eyeball
+            // the URL (or Ctrl-C and visit it by hand) before a browser launches.
+            if (opts.open === true) {
+              console.log(`Opening ${url} in your browser...`);
+              return true;
+            }
+            if (!isInteractive()) {
+              console.log(`Open ${url} in your browser to finish signing in.`);
+              return false;
+            }
+            await promptLine(`${bold("Press Enter")} to open ${url} in your browser... `);
+            return true;
+          },
         });
-        console.log(`Signed in (uid: ${uid}).`);
+        console.log(tick(`Signed in as ${uid}.`));
         // A set PAPERBAKER_TOKEN silently overrides the token we just stored
         // (resolveAuthToken is env-first), so this login would have no effect.
         // Warn to stderr, mirroring `logout`.

@@ -25,8 +25,8 @@ interface DataCtx {
   loading: boolean;
   isSaved: (paperId: string) => boolean;
   itemFor: (paperId: string) => LibraryItem | undefined;
-  countFor: (projectId: string) => number;
-  papersIn: (projectId: string) => LibraryItem[];
+  countFor: (stableId: string) => number;
+  papersIn: (stableId: string) => LibraryItem[];
 }
 
 const Ctx = createContext<DataCtx | null>(null);
@@ -99,13 +99,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<DataCtx>(() => {
     // projectPapers memberships are the source of truth; fold them into a
-    // paperId -> projectIds map and attach to each library item, so the rest of
-    // the app can read item.projectIds without any stored (divergeable) array.
+    // paperId -> project stableIds map and attach to each library item, so the
+    // rest of the app reads item.projectIds (stableIds) without any stored
+    // (divergeable) array.
     const projectIdsByPaper = new Map<string, string[]>();
     for (const m of memberships) {
       const list = projectIdsByPaper.get(m.paperId);
-      if (list) list.push(m.projectId);
-      else projectIdsByPaper.set(m.paperId, [m.projectId]);
+      if (list) list.push(m.projectStableId);
+      else projectIdsByPaper.set(m.paperId, [m.projectStableId]);
     }
     // Compose each saved record with its metadata. Items whose metadata hasn't
     // loaded yet are held back (rather than rendering a blank row).
@@ -131,9 +132,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
       loading,
       isSaved: (id) => savedIds.has(id),
       itemFor: (id) => byId.get(id),
-      countFor: (pid) =>
-        library.filter((i) => i.projectIds.includes(pid)).length,
-      papersIn: (pid) => library.filter((i) => i.projectIds.includes(pid)),
+      countFor: (stableId) =>
+        library.filter((i) => i.projectIds.includes(stableId)).length,
+      papersIn: (stableId) =>
+        library.filter((i) => i.projectIds.includes(stableId)),
     };
   }, [saved, projects, memberships, meta, loading]);
 

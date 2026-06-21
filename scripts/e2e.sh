@@ -2,8 +2,9 @@
 # Run the Playwright E2E suite against an ISOLATED emulator.
 #
 # The e2e emulator runs on offset ports (firestore 8180, auth 9199, functions
-# 5101, hub 4500 — see firebase.e2e.json), so it never collides with a dev
-# emulator on the standard ports. Your dev emulator and its data are left
+# 5101, hub 4600 — see firebase.test.json, the shared isolated-emulator config
+# every local test suite uses), so it never collides with a dev emulator on the
+# standard ports. Your dev emulator and its data are left
 # completely untouched; you can keep `pnpm emulators` running while e2e runs.
 #
 # If an e2e emulator is already up on :8180 (e.g. you ran `pnpm emulators:e2e`
@@ -34,7 +35,7 @@ if curl -sf "http://${E2E_FIRESTORE_HOST}/" >/dev/null 2>&1; then
 else
   echo "▶ Starting a throwaway isolated emulator on offset ports for this run."
   export PATH="/opt/homebrew/opt/openjdk/bin:$PATH"
-  exec firebase emulators:exec --config firebase.e2e.json \
+  exec firebase emulators:exec --config firebase.test.json \
     --only auth,firestore,functions --project "$PROJECT_ID" \
     "npx playwright test $*"
 fi

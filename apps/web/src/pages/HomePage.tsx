@@ -38,11 +38,11 @@ export default function HomePage() {
           style={{ gridTemplateColumns: "repeat(auto-fill,minmax(160px,1fr))" }}
         >
           {recentProjects.map((p) => (
-            <Link key={p.projectId} to={`/projects/${p.slug}`} className="no-underline">
+            <Link key={p.stableId} to={`/projects/${p.stableId}`} className="no-underline">
               <Card>
                 <Card.Header>
                   <Card.Title>{p.name}</Card.Title>
-                  <Card.Description>{countFor(p.projectId)} papers</Card.Description>
+                  <Card.Description>{countFor(p.stableId)} papers</Card.Description>
                 </Card.Header>
               </Card>
             </Link>

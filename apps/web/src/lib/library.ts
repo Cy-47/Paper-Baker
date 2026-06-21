@@ -30,7 +30,8 @@ export interface SavedRecord {
 // A library item as the UI consumes it: the paper's canonical metadata (joined
 // from papers/) plus this user's saved/membership state. `projectIds` is derived
 // in useData from the projectPapers memberships (the single source of truth), so
-// a stale array can never diverge from the real membership.
+// a stale array can never diverge from the real membership. The ids it holds are
+// project stableIds (the global doc keys used for every data op).
 export interface LibraryItem extends PaperMetadata {
   projectIds: string[];
   savedAt?: string;
@@ -39,15 +40,18 @@ export interface LibraryItem extends PaperMetadata {
 // One project<->paper membership, surfaced from a collectionGroup query.
 export interface Membership {
   paperId: string;
-  projectId: string;
+  projectStableId: string;
 }
 
 export interface ProjectDoc {
-  projectId: string;
-  slug: string;
+  // The global, server-minted doc key — used for every data op (file/rename/etc).
+  stableId: string;
+  // The user-facing, renamable id (the `id` in `handle/id`) — used in URLs.
+  id: string;
   name: string;
   description: string;
   ownerUid: string;
+  ownerHandle: string;
 }
 
 function uid(): string {
@@ -65,10 +69,11 @@ function libCol() {
   return collection(db, "users", uid(), "savedPapers");
 }
 
-// Projects are scoped under the owner: users/{uid}/projects/{id}. The path
-// enforces ownership, so reads need no ownerUid filter.
+// Projects are now top-level docs at projects/{stableId}. Reads are gated on
+// membership (the security rules require the array-contains filter below), so the
+// query returns exactly the projects this user can see (owned + later shared).
 function projectsCol() {
-  return collection(db, "users", uid(), "projects");
+  return collection(db, "projects");
 }
 
 export function subscribeSavedPapers(cb: (saved: SavedRecord[]) => void) {
@@ -99,12 +104,12 @@ export async function getPaperMeta(paperId: string): Promise<PaperMetadata | nul
 }
 
 // All of the current user's project memberships, in one collectionGroup query.
-// Authorized by the recursive projectPapers rule (read if ownerUid == uid); the
-// where() filter is required for that rule to admit the query.
+// Authorized by the recursive projectPapers rule (read if member); the
+// array-contains filter is required for that rule to admit the query.
 export function subscribeMemberships(cb: (memberships: Membership[]) => void) {
   const q = query(
     collectionGroup(db, "projectPapers"),
-    where("ownerUid", "==", uid())
+    where("memberUids", "array-contains", uid())
   );
   return onSnapshot(q, (snap) => {
     cb(
@@ -112,7 +117,7 @@ export function subscribeMemberships(cb: (memberships: Membership[]) => void) {
         const data = d.data();
         return {
           paperId: data.paperId as string,
-          projectId: data.projectId as string,
+          projectStableId: data.projectStableId as string,
         };
       })
     );
@@ -120,16 +125,21 @@ export function subscribeMemberships(cb: (memberships: Membership[]) => void) {
 }
 
 export function subscribeProjects(cb: (projects: ProjectDoc[]) => void) {
-  return onSnapshot(projectsCol(), (snap) => {
+  const q = query(
+    projectsCol(),
+    where("memberUids", "array-contains", uid())
+  );
+  return onSnapshot(q, (snap) => {
     cb(
       snap.docs.map((d) => {
         const data = d.data();
         return {
-          projectId: d.id,
-          slug: data.slug ?? d.id,
+          stableId: d.id,
+          id: data.id ?? d.id,
           name: data.name ?? "",
           description: data.description ?? "",
           ownerUid: data.ownerUid ?? "",
+          ownerHandle: data.ownerHandle ?? "",
         };
       })
     );
@@ -141,21 +151,21 @@ export function subscribeProjects(cb: (projects: ProjectDoc[]) => void) {
 // ---------------------------------------------------------------------------
 
 /**
- * Create a project (backend mints the stable id + unique slug). Returns both the
- * stable `projectId` (used for filing papers and other mutations) and the `slug`
- * (the user-facing id, used to build the project URL).
+ * Create a project (backend mints the global stableId + an owner-unique id).
+ * Returns both the `stableId` (used for filing papers and other mutations) and
+ * the user-facing `id` (used to build the project URL).
  */
 export async function createProject(
   name: string,
   description = "",
-): Promise<{ projectId: string; slug: string }> {
+): Promise<{ stableId: string; id: string }> {
   const project = await (await getApiClient()).createProject(name.trim(), description.trim());
-  return { projectId: project.projectId, slug: project.slug };
+  return { stableId: project.stableId, id: project.id };
 }
 
-/** Rename a project; the stable projectId (and every binding) is unchanged. */
-export async function renameProject(projectId: string, name: string): Promise<void> {
-  await (await getApiClient()).updateProject(projectId, { name: name.trim() });
+/** Rename a project; the stableId (and every binding) is unchanged. */
+export async function renameProject(stableId: string, name: string): Promise<void> {
+  await (await getApiClient()).updateProject(stableId, { name: name.trim() });
 }
 
 /** Save a paper to the library (backend resolves its metadata, then saves). */
@@ -165,20 +175,20 @@ export async function saveToLibrary(paper: PaperMetadata): Promise<void> {
 
 /** File a paper into a project. Ensures it's saved (resolved) first, then files. */
 export async function addPaperToProject(
-  projectId: string,
+  stableId: string,
   paper: PaperMetadata
 ): Promise<void> {
   const client = await getApiClient();
   await client.saveToLibrary(paper.source);
-  await client.addPaperToProject(projectId, paper.paperId);
+  await client.addPaperToProject(stableId, paper.paperId);
 }
 
 /** Unfile a paper from one project (leaves it saved in the library). */
 export async function removePaperFromProject(
-  projectId: string,
+  stableId: string,
   paperId: string
 ): Promise<void> {
-  await (await getApiClient()).removePaperFromProject(projectId, paperId);
+  await (await getApiClient()).removePaperFromProject(stableId, paperId);
 }
 
 /** Unsave a paper entirely. The backend cascades the unfiling across projects. */

@@ -1,5 +1,6 @@
 export * from "./types.js";
 export * from "./project-id.js";
+export * from "./handle.js";
 export * from "./bibtex.js";
 export * from "./tex.js";
 export * from "./arxiv-throttle.js";

@@ -2,7 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 // Full-stack web E2E. Run via `pnpm test:e2e` (scripts/e2e.sh), which brings up
 // an ISOLATED emulator on offset ports so it never collides with a dev emulator
-// running on the standard ports. The ports below match firebase.e2e.json; they
+// running on the standard ports. The ports below match firebase.test.json; they
 // can be overridden via env if you ever need to relocate them.
 const FS_PORT = process.env.E2E_FIRESTORE_PORT ?? "8180";
 const AUTH_PORT = process.env.E2E_AUTH_PORT ?? "9199";

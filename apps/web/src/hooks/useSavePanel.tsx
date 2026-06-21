@@ -54,9 +54,9 @@ function Panel({ paper, onClose }: { paper: PaperMetadata; onClose: () => void }
   const item = itemFor(paper.paperId);
   const memberOf = new Set(item?.projectIds ?? []);
 
-  const toggle = (pid: string) => {
-    if (memberOf.has(pid)) removePaperFromProject(pid, paper.paperId);
-    else addPaperToProject(pid, paper);
+  const toggle = (stableId: string) => {
+    if (memberOf.has(stableId)) removePaperFromProject(stableId, paper.paperId);
+    else addPaperToProject(stableId, paper);
   };
 
   const addProject = async () => {
@@ -65,7 +65,7 @@ function Panel({ paper, onClose }: { paper: PaperMetadata; onClose: () => void }
     setAdding(true);
     try {
       const project = await createProject(name);
-      await addPaperToProject(project.projectId, paper);
+      await addPaperToProject(project.stableId, paper);
       setNewName("");
     } finally {
       setAdding(false);
@@ -104,10 +104,10 @@ function Panel({ paper, onClose }: { paper: PaperMetadata; onClose: () => void }
               <div className="flex flex-col gap-2">
                 {projects.map((p) => (
                   <Checkbox
-                    key={p.projectId}
+                    key={p.stableId}
                     className="w-full"
-                    isSelected={memberOf.has(p.projectId)}
-                    onChange={() => toggle(p.projectId)}
+                    isSelected={memberOf.has(p.stableId)}
+                    onChange={() => toggle(p.stableId)}
                   >
                     <Checkbox.Content className="w-full">
                       <Checkbox.Control>

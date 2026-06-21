@@ -17,10 +17,10 @@ import SaveButton from "./SaveButton";
  * one pass.
  */
 export default function AddPaperModal({
-  projectId,
+  stableId,
   onClose,
 }: {
-  projectId: string;
+  stableId: string;
   onClose: () => void;
 }) {
   const { library, itemFor, isSaved } = useData();
@@ -29,7 +29,7 @@ export default function AddPaperModal({
   const [searching, setSearching] = useState(false);
 
   const f = q.trim().toLowerCase();
-  const available = library.filter((i) => !(i.projectIds ?? []).includes(projectId));
+  const available = library.filter((i) => !(i.projectIds ?? []).includes(stableId));
   const libMatches = (f
     ? available.filter(
         (i) =>
@@ -58,10 +58,10 @@ export default function AddPaperModal({
 
   const addExisting = (paperId: string) => {
     const item = itemFor(paperId);
-    if (item) addPaperToProject(projectId, item);
+    if (item) addPaperToProject(stableId, item);
   };
   const saveAndAdd = (p: PaperMetadata) => {
-    addPaperToProject(projectId, p);
+    addPaperToProject(stableId, p);
   };
 
   return (

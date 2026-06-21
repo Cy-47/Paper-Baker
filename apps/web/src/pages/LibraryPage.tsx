@@ -16,7 +16,7 @@ export default function LibraryPage() {
   const panel = useSavePanel();
   const [filter, setFilter] = useState("");
   const nameOf = useMemo(
-    () => new Map(projects.map((p) => [p.projectId, p.name])),
+    () => new Map(projects.map((p) => [p.stableId, p.name])),
     [projects]
   );
 

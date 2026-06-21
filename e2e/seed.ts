@@ -1,9 +1,10 @@
-// E2E seeding helper. The web no longer stores paper metadata in savedPapers —
-// it lives once in the global papers/{id} cache, which clients can't write
-// (backend-only). So the dev __pbSaveToLibrary hook writes only the thin
-// savedPapers record, and the test seeds the matching papers/{id} metadata
-// straight into the emulator here (admin REST, bypassing rules). This survives a
-// page reload, unlike an in-memory shim, so the read-path join keeps rendering.
+// E2E seeding helper (admin REST against the Firestore emulator, bypassing rules
+// — for collections the web can't write). The web no longer stores paper metadata
+// in savedPapers — it lives once in the global papers/ cache. The dev
+// __pbSaveToLibrary hook writes only the thin savedPapers record, so the test
+// seeds the matching papers/{id} here. Survives a reload (unlike an in-memory
+// shim), so the read-path join keeps rendering. (Handle onboarding is dismissed
+// through the UI in each spec's signIn, so no profile seeding is needed.)
 
 const PROJECT_ID = "paper-baker";
 
@@ -31,12 +32,12 @@ function toFields(obj: Record<string, unknown>): Record<string, unknown> {
 }
 
 /**
- * Seed a paper's canonical metadata into the global papers/{paperId} cache via
- * the Firestore emulator's admin REST endpoint (the `Bearer owner` token
- * bypasses security rules, exactly as the Admin SDK does).
+ * Write a single doc into the Firestore emulator via its admin REST endpoint
+ * (the `Bearer owner` token bypasses security rules, exactly as the Admin SDK
+ * does — letting tests seed backend-only collections the web can't write).
  */
-export async function seedPaperMeta(paper: { paperId: string }): Promise<void> {
-  const name = `projects/${PROJECT_ID}/databases/(default)/documents/papers/${paper.paperId}`;
+async function seedDoc(path: string, data: Record<string, unknown>): Promise<void> {
+  const name = `projects/${PROJECT_ID}/databases/(default)/documents/${path}`;
   const res = await fetch(
     `http://${host()}/v1/projects/${PROJECT_ID}/databases/(default)/documents:commit`,
     {
@@ -46,11 +47,18 @@ export async function seedPaperMeta(paper: { paperId: string }): Promise<void> {
         authorization: "Bearer owner",
       },
       body: JSON.stringify({
-        writes: [{ update: { name, fields: toFields(paper) } }],
+        writes: [{ update: { name, fields: toFields(data) } }],
       }),
     },
   );
   if (!res.ok) {
-    throw new Error(`seedPaperMeta failed (${res.status}): ${await res.text()}`);
+    throw new Error(`seedDoc(${path}) failed (${res.status}): ${await res.text()}`);
   }
+}
+
+/**
+ * Seed a paper's canonical metadata into the global papers/{paperId} cache.
+ */
+export async function seedPaperMeta(paper: { paperId: string }): Promise<void> {
+  await seedDoc(`papers/${paper.paperId}`, paper);
 }

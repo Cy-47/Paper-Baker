@@ -92,9 +92,10 @@ stays local until the first `pb sync`. Name defaults to the directory name.
 | --- | --- |
 | `--no-brief` | Don't add the brief to the root `AGENTS.md`/`CLAUDE.md` |
 
-#### `pb project bind <id>`
+#### `pb project bind <id|handle/id>`
 
-Bind the current directory to an existing remote project.
+Bind the current directory to an existing remote project. Use a bare `id` for one of
+your own projects, or `handle/id` for another owner's (once it's shared with you).
 
 | Option | Description |
 | --- | --- |
@@ -177,7 +178,7 @@ agent search tools (ripgrep et al.) can read both the metadata and the paper tex
 your-project/
 ├── AGENTS.md            # (or CLAUDE.md) short brief pointing agents at the papers
 └── paperbaker/
-    ├── config.json      # project binding: name, server id, slug
+    ├── config.json      # project binding: name, stableId, id, ownerHandle
     ├── papers.json      # manifest: paper list + cached metadata
     ├── refs.bib         # generated BibTeX bibliography
     ├── README.md        # generated guide: the project's papers and where each source lives

@@ -98,11 +98,11 @@ async function handleSave(uid: string, req: Request, res: Response) {
 }
 
 async function handleUnsave(uid: string, paperId: string, res: Response) {
-  // Unsaving also unfiles the paper from every project (a paper can't be in a
-  // project without being saved — projectPaper ⊆ savedPapers). We iterate the
-  // user's projects and delete the membership doc by id (no collectionGroup
-  // index needed), decrementing each project's paperCount.
-  const projects = await db().collection("users").doc(uid).collection("projects").get();
+  // Unsaving also unfiles the paper from every project the user OWNS (a paper
+  // can't be in their library-backed project without being saved —
+  // projectPaper ⊆ savedPapers). We iterate the owner's top-level projects and
+  // delete the membership doc by id, decrementing each project's paperCount.
+  const projects = await db().collection("projects").where("ownerUid", "==", uid).get();
   const batch = db().batch();
   for (const project of projects.docs) {
     const memberRef = project.ref.collection("projectPapers").doc(paperId);

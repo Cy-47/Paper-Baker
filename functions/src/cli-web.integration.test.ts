@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 import type { Request } from "firebase-functions/v2/https";
 import type { Response } from "express";
 import { initializeApp, getApps } from "firebase-admin/app";
-import { getFirestore } from "firebase-admin/firestore";
+import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
 import { handleProjectsRequest } from "./routes/projects.js";
 import { handlePapersRequest } from "./routes/papers.js";
@@ -262,6 +262,26 @@ async function seedPaperCache(): Promise<void> {
   await getFirestore().collection("papers").doc(PAPER_ID).set(PAPER);
 }
 
+/** Seed a user's public profile + handle registry so `handle/id` lookups resolve
+ * and `create` can denormalize the owner's handle. */
+async function seedHandle(uid: string, handle: string): Promise<void> {
+  const db = getFirestore();
+  await db
+    .collection("users")
+    .doc(uid)
+    .set({ uid, handle, displayName: handle, createdAt: "2026-01-01T00:00:00Z" });
+  await db.collection("handles").doc(handle).set({ uid });
+}
+
+/** Add a member to a project's memberUids — stands in for the (deferred) sharing
+ * flow, which is purely additive: dropping a uid into the array is the whole grant. */
+async function shareWith(stableId: string, uid: string): Promise<void> {
+  await getFirestore()
+    .collection("projects")
+    .doc(stableId)
+    .update({ memberUids: FieldValue.arrayUnion(uid) });
+}
+
 /** A real Firebase ID token for `uid` (the web app's credential). */
 async function firebaseIdToken(uid: string): Promise<string> {
   const custom = await getAuth().createCustomToken(uid);
@@ -425,10 +445,21 @@ function makeWorkspace(): Workspace {
   };
 }
 
-function boundProjectId(work: string): string {
-  const cfg = JSON.parse(
+interface ProjectConfig {
+  name?: string;
+  stableId?: string;
+  id?: string;
+  ownerHandle?: string;
+}
+
+function readConfig(work: string): ProjectConfig {
+  return JSON.parse(
     readFileSync(join(work, "paperbaker", "config.json"), "utf8"),
-  ) as { stableId?: string };
+  ) as ProjectConfig;
+}
+
+function boundProjectId(work: string): string {
+  const cfg = readConfig(work);
   if (!cfg.stableId) throw new Error("project is not synced (no stableId)");
   return cfg.stableId;
 }
@@ -457,12 +488,11 @@ function refsBib(work: string): string {
 }
 
 // Server-state readers (the "what landed on the backend" assertions).
-function membershipDoc(uid: string, projectId: string, paperId = PAPER_ID) {
+// Projects are top-level now (projects/{stableId}) — keyed by stableId, not uid.
+function membershipDoc(stableId: string, paperId = PAPER_ID) {
   return getFirestore()
-    .collection("users")
-    .doc(uid)
     .collection("projects")
-    .doc(projectId)
+    .doc(stableId)
     .collection("projectPapers")
     .doc(paperId)
     .get();
@@ -495,7 +525,7 @@ describe("CLI mutations land on the server immediately", () => {
       const projectId = boundProjectId(work);
       // Membership AND the implied library save both exist on the backend —
       // immediately, from `add` alone.
-      expect((await membershipDoc(ALICE, projectId)).exists).toBe(true);
+      expect((await membershipDoc(projectId)).exists).toBe(true);
       expect((await savedDoc(ALICE)).exists).toBe(true);
     } finally {
       cleanup();
@@ -517,7 +547,7 @@ describe("CLI mutations land on the server immediately", () => {
 
       const out = await pb(["remove", PAPER_ID], work, token, cfg);
       expect(out).toContain("Removed:");
-      expect((await membershipDoc(ALICE, projectId)).exists).toBe(false);
+      expect((await membershipDoc(projectId)).exists).toBe(false);
     } finally {
       cleanup();
     }
@@ -556,11 +586,11 @@ describe("project lifecycle is shared between CLI and web", () => {
     try {
       const out = await pb(["project", "create", "Shared"], work, token, cfg);
       expect(out).toMatch(/Created "Shared"/);
-      expect(out).toMatch(/slug: shared/);
+      expect(out).toMatch(/id: shared/);
 
       const list = await web(ALICE, "GET", "/projects");
-      const projects = list.body as unknown as Array<{ slug: string; name: string }>;
-      expect(projects.map((p) => p.slug)).toContain("shared");
+      const projects = list.body as unknown as Array<{ id: string; name: string }>;
+      expect(projects.map((p) => p.id)).toContain("shared");
     } finally {
       cleanup();
     }
@@ -572,11 +602,11 @@ describe("project lifecycle is shared between CLI and web", () => {
     try {
       const projectId = await createSynced("Old Name", work, token, cfg);
       const out = await pb(["project", "rename", "New Name"], work, token, cfg);
-      expect(out).toMatch(/slug: new-name/);
+      expect(out).toMatch(/id: new-name/);
 
       const got = await web(ALICE, "GET", `/projects/${projectId}`);
       expect(got.body.name).toBe("New Name");
-      expect(got.body.slug).toBe("new-name");
+      expect(got.body.id).toBe("new-name");
     } finally {
       cleanup();
     }
@@ -612,7 +642,7 @@ describe("project lifecycle is shared between CLI and web", () => {
       expect(out).toMatch(/pushed 1 paper/);
 
       const projectId = boundProjectId(work);
-      expect((await membershipDoc(ALICE, projectId)).exists).toBe(true);
+      expect((await membershipDoc(projectId)).exists).toBe(true);
     } finally {
       cleanup();
     }
@@ -650,7 +680,7 @@ describe("CLI reads back what the web wrote", () => {
     const { work, cfg, cleanup } = makeWorkspace();
     try {
       const created = await web(ALICE, "POST", "/projects", { name: "Web Made" });
-      const projectId = created.body.projectId as string;
+      const projectId = created.body.stableId as string;
       await webFile(ALICE, projectId);
 
       const out = await pb(
@@ -700,12 +730,12 @@ describe("CLI reads back what the web wrote", () => {
       // The locally-held paper is re-filed, not dropped.
       await pb(["sync"], work, token, cfg);
       expect(localPapers(work).map((p) => p.paperId)).toContain(PAPER_ID);
-      expect((await membershipDoc(ALICE, projectId)).exists).toBe(true);
+      expect((await membershipDoc(projectId)).exists).toBe(true);
 
       // The way to drop a paper is `pb remove`, which also deletes it server-side.
       await pb(["remove", PAPER_ID], work, token, cfg);
       expect(localPapers(work)).toHaveLength(0);
-      expect((await membershipDoc(ALICE, projectId)).exists).toBe(false);
+      expect((await membershipDoc(projectId)).exists).toBe(false);
     } finally {
       cleanup();
     }
@@ -757,6 +787,224 @@ describe("isolation and revocation across the seam", () => {
       const res = await pbTry(["project", "list"], work, token, cfg);
       expect(res.status).not.toBe(0);
       expect(res.stderr).toMatch(/revok|401/i);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ===========================================================================
+// E. Changing the remote: bind, unbind, and re-point a directory.
+//
+// The binding lives entirely in config.json (keyed by the immutable stableId);
+// changing it is unbind + bind. These drive that surface through the real binary
+// — including the membership gate on another owner's project (the sharing seam).
+// ===========================================================================
+
+describe("changing the remote binding", () => {
+  it("refuses to bind a directory that's already bound (no silent clobber)", async () => {
+    const token = await seedSession("conn-bound", ALICE);
+    const { work, cfg, cleanup } = makeWorkspace();
+    try {
+      const alpha = await createSynced("Alpha", work, token, cfg);
+      // A second, valid project exists — but the bind is refused before we even
+      // resolve it, because this directory already points at Alpha.
+      await web(ALICE, "POST", "/projects", { name: "Beta" });
+
+      const res = await pbTry(["project", "bind", "beta"], work, token, cfg);
+      expect(res.status).not.toBe(0);
+      expect(res.stderr).toMatch(/already bound to a remote project/i);
+      expect(res.stderr).toMatch(/unbind/i);
+      expect(boundProjectId(work)).toBe(alpha); // still Alpha, untouched
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("`unbind` detaches a synced project locally but leaves the remote intact", async () => {
+    const token = await seedSession("conn-unbind", ALICE);
+    const { work, cfg, cleanup } = makeWorkspace();
+    try {
+      await createSynced("Solo", work, token, cfg);
+
+      const out = await pb(["project", "unbind"], work, token, cfg);
+      expect(out).toMatch(/Unbound/i);
+      expect(out).toMatch(/remote was left intact/i);
+
+      // The directory is now local-only (no stableId in config)…
+      expect(readConfig(work).stableId).toBeUndefined();
+      // …yet the server project is untouched: `project list` (a server read)
+      // still shows it.
+      const list = await pb(["project", "list"], work, token, cfg);
+      expect(list).toContain("solo");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("unbind then bind re-points the directory to a different project", async () => {
+    const token = await seedSession("conn-repoint", ALICE);
+    const { work, cfg, cleanup } = makeWorkspace();
+    try {
+      const first = await createSynced("First", work, token, cfg);
+      const second = await web(ALICE, "POST", "/projects", { name: "Second" });
+      const secondId = second.body.stableId as string;
+
+      await pb(["project", "unbind"], work, token, cfg);
+      const out = await pb(["project", "bind", "second"], work, token, cfg);
+
+      expect(out).toMatch(/Bound to "Second"/);
+      expect(boundProjectId(work)).toBe(secondId);
+      expect(boundProjectId(work)).not.toBe(first);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("binds another owner's project by handle/id when it's shared with you", async () => {
+    const aliceToken = await seedSession("conn-share-ok", ALICE);
+    const { work, cfg, cleanup } = makeWorkspace();
+    try {
+      await seedHandle(BOB, "bob");
+      const created = await web(BOB, "POST", "/projects", { name: "Bob Shared" });
+      const bobStableId = created.body.stableId as string;
+
+      await shareWith(bobStableId, ALICE);
+
+      const out = await pb(
+        ["project", "bind", "bob/bob-shared"],
+        work,
+        aliceToken,
+        cfg,
+      );
+      expect(out).toMatch(/Bound to "Bob Shared"/);
+      expect(boundProjectId(work)).toBe(bobStableId);
+
+      // The binding caches the owner's handle + id so the remote coordinate
+      // (bob/bob-shared) round-trips in `list`/`rename` output.
+      const conf = readConfig(work);
+      expect(conf.ownerHandle).toBe("bob");
+      expect(conf.id).toBe("bob-shared");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("refuses to bind another owner's project that isn't shared with you", async () => {
+    const aliceToken = await seedSession("conn-share-no", ALICE);
+    const { work, cfg, cleanup } = makeWorkspace();
+    try {
+      await seedHandle(BOB, "bob");
+      await web(BOB, "POST", "/projects", { name: "Bob Private" });
+      // No shareWith — ALICE is not a member, so the lookup 404s (no leak).
+
+      const res = await pbTry(
+        ["project", "bind", "bob/bob-private"],
+        work,
+        aliceToken,
+        cfg,
+      );
+      expect(res.status).not.toBe(0);
+      expect(res.stderr).toMatch(/no project 'bob\/bob-private' found|isn't shared with you/i);
+      expect(existsSync(join(work, "paperbaker", "config.json"))).toBe(false);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ===========================================================================
+// F. bind reconciles content drift between a local-only project and the remote.
+//
+// When the bound directory's papers differ from the remote's, bind needs a mode:
+// --merge (union, push local-only up) or --replace-local (remote wins). Without
+// one, a non-interactive shell refuses rather than guessing. Set-up: a local-only
+// project (created + `add`ed offline) carrying the fixture paper, bound onto a
+// freshly-created empty remote.
+// ===========================================================================
+
+describe("bind reconciles content drift", () => {
+  async function localProjectWithPaper(
+    name: string,
+    work: string,
+    cfg: string,
+  ): Promise<void> {
+    await pbNoAuth(["project", "create", name], work, cfg);
+    await pbNoAuth(["add", ARXIV_ID], work, cfg);
+    expect(localPapers(work).map((p) => p.paperId)).toContain(PAPER_ID);
+    expect(readConfig(work).stableId).toBeUndefined(); // still offline
+  }
+
+  it("`--merge` unions the local-only paper up onto the remote", async () => {
+    const token = await seedSession("conn-merge", ALICE);
+    await seedPaperCache();
+    const { work, cfg, cleanup } = makeWorkspace();
+    try {
+      await localProjectWithPaper("Local Lib", work, cfg);
+      const remote = await web(ALICE, "POST", "/projects", { name: "Remote Empty" });
+      const remoteId = remote.body.stableId as string;
+
+      const out = await pb(
+        ["project", "bind", "remote-empty", "--merge"],
+        work,
+        token,
+        cfg,
+      );
+      expect(out).toMatch(/Bound to "Remote Empty"/);
+      expect(out).toMatch(/Pushed 1 local paper/i);
+
+      // Union: the paper stays local AND is now filed on the remote.
+      expect(localPapers(work).map((p) => p.paperId)).toContain(PAPER_ID);
+      expect((await membershipDoc(remoteId)).exists).toBe(true);
+      expect(boundProjectId(work)).toBe(remoteId);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("`--replace-local` adopts the remote and drops the local-only paper", async () => {
+    const token = await seedSession("conn-replace", ALICE);
+    await seedPaperCache();
+    const { work, cfg, cleanup } = makeWorkspace();
+    try {
+      await localProjectWithPaper("Throwaway", work, cfg);
+      const remote = await web(ALICE, "POST", "/projects", { name: "Authoritative" });
+      const remoteId = remote.body.stableId as string;
+
+      const out = await pb(
+        ["project", "bind", "authoritative", "--replace-local"],
+        work,
+        token,
+        cfg,
+      );
+      expect(out).toMatch(/Bound to "Authoritative"/);
+
+      // replace-local: the remote (empty) wins, the local-only paper is dropped,
+      // and nothing is pushed up.
+      expect(localPapers(work)).toHaveLength(0);
+      expect((await membershipDoc(remoteId)).exists).toBe(false);
+      expect(boundProjectId(work)).toBe(remoteId);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("refuses on drift without a mode flag in a non-interactive shell", async () => {
+    const token = await seedSession("conn-drift", ALICE);
+    await seedPaperCache();
+    const { work, cfg, cleanup } = makeWorkspace();
+    try {
+      await localProjectWithPaper("Has Paper", work, cfg);
+      await web(ALICE, "POST", "/projects", { name: "Diverged" });
+
+      const res = await pbTry(["project", "bind", "diverged"], work, token, cfg);
+      expect(res.status).not.toBe(0);
+      expect(res.stderr).toMatch(/differs from the remote project|Re-run with --merge/i);
+
+      // The bind aborted before persisting — the directory is still local-only,
+      // and the local paper is intact.
+      expect(readConfig(work).stableId).toBeUndefined();
+      expect(localPapers(work).map((p) => p.paperId)).toContain(PAPER_ID);
     } finally {
       cleanup();
     }

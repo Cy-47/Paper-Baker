@@ -2,6 +2,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { execFile } from "node:child_process";
 import { hostname } from "node:os";
 import { loadGlobalConfig, saveGlobalConfig, getApiUrl } from "../config.js";
+import { bold, tick, bang } from "./style.js";
 
 // ---------------------------------------------------------------------------
 // Device-link login (client side of the RFC 8628 flow).
@@ -119,7 +120,14 @@ function tryOpenBrowser(url: string): void {
 
 export interface DeviceLoginOptions {
   log?: (message: string) => void;
-  openBrowser?: boolean;
+  /**
+   * Decide whether to open the verification URL in a browser. Called after the
+   * URL + code are printed and before polling begins; return true to open it.
+   * This is where the command does its interactive "Press Enter to open…" prompt
+   * — keeping this helper agent-safe: omit the callback and login never blocks
+   * on stdin and never spawns a browser.
+   */
+  openBrowser?: (verificationUri: string) => boolean | Promise<boolean>;
 }
 
 /**
@@ -134,12 +142,19 @@ export async function deviceLogin(
 
   const start = await requestDeviceCode();
   log("");
-  log("To finish signing in, open this URL in a browser and enter the code:");
-  log(`  ${start.verificationUri}`);
-  log(`  code: ${start.userCode}`);
-  log("");
-  log("Waiting for approval…");
-  if (opts.openBrowser) tryOpenBrowser(start.verificationUri);
+  log(bang(`First copy your one-time code: ${bold(start.userCode)}`));
+
+  // The callback owns the "open the URL" line — it may prompt ("Press Enter to
+  // open…") and block until the user acts, so it's awaited before we poll. When
+  // no callback is supplied (embedded/agent use) we still surface the URL so the
+  // code can be entered by hand.
+  if (opts.openBrowser) {
+    if (await opts.openBrowser(start.verificationUri)) {
+      tryOpenBrowser(start.verificationUri);
+    }
+  } else {
+    log(`Open ${start.verificationUri} in your browser to continue.`);
+  }
 
   const { accessToken, uid } = await pollForToken(
     start.deviceCode,
@@ -152,6 +167,7 @@ export async function deviceLogin(
   cfg.uid = uid;
   saveGlobalConfig(cfg);
 
+  log(tick("Authentication complete."));
   return { uid };
 }
 

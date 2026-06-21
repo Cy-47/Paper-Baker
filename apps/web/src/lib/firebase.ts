@@ -45,9 +45,11 @@ if (import.meta.env.DEV && import.meta.env.VITE_USE_EMULATOR === "true") {
 
   // Headless sign-in helper for automated testing against the Auth emulator,
   // which accepts unsigned ID tokens (no popup needed). Dev + emulator only.
+  // Resolves to the emulator-minted uid so the e2e can seed that user's profile
+  // (the uid is the emulator's, not the token's `sub`).
   (window as unknown as { __pbDevSignIn?: unknown }).__pbDevSignIn = async (
     email = "dev@example.com"
-  ) => {
+  ): Promise<string> => {
     const { GoogleAuthProvider, signInWithCredential } = await import(
       "firebase/auth"
     );
@@ -58,6 +60,7 @@ if (import.meta.env.DEV && import.meta.env.VITE_USE_EMULATOR === "true") {
       name: "Dev User",
     });
     const cred = GoogleAuthProvider.credential(fakeIdToken);
-    return signInWithCredential(auth, cred);
+    const result = await signInWithCredential(auth, cred);
+    return result.user.uid;
   };
 }

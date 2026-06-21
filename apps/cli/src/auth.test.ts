@@ -96,7 +96,7 @@ afterEach(() => {
 describe("device-link login", () => {
   it("polls through pending → approved and stores the access token", async () => {
     const logs: string[] = [];
-    const result = await deviceLogin({ log: (m) => logs.push(m), openBrowser: false });
+    const result = await deviceLogin({ log: (m) => logs.push(m) });
 
     expect(result.uid).toBe("alice-uid");
     // It polled at least twice (pending, then approved).
@@ -113,8 +113,22 @@ describe("device-link login", () => {
     expect(cfg.uid).toBe("alice-uid");
   });
 
+  it("offers to open the verification URL, then honors the decision", async () => {
+    let offered: string | undefined;
+    // Decline (return false) so the test never actually spawns a browser.
+    const result = await deviceLogin({
+      log: () => {},
+      openBrowser: (url) => {
+        offered = url;
+        return false;
+      },
+    });
+    expect(offered).toBe("https://example.test/device");
+    expect(result.uid).toBe("alice-uid");
+  });
+
   it("reports device metadata so the web tab can label the connection", async () => {
-    await deviceLogin({ log: () => {}, openBrowser: false });
+    await deviceLogin({ log: () => {} });
     const device = (lastCodeBody?.device ?? {}) as Record<string, unknown>;
     expect(typeof device.hostname).toBe("string");
     expect(device.platform).toBe(process.platform);
@@ -129,7 +143,7 @@ describe("resolveAuthToken precedence", () => {
   });
 
   it("uses the stored access token from the device session when no env token", async () => {
-    await deviceLogin({ log: () => {}, openBrowser: false });
+    await deviceLogin({ log: () => {} });
     expect(await resolveAuthToken()).toBe(ACCESS_TOKEN);
   });
 

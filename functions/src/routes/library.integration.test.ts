@@ -153,13 +153,16 @@ describe("DELETE /library/:paperId — unsave", () => {
     const db = getFirestore();
     await seedCachedPaper();
 
-    // A saved paper filed into one project (paperCount = 1).
+    // A saved paper filed into one (top-level) project owned by ALICE.
     await db.collection("users").doc(ALICE).collection("savedPapers").doc(PAPER_ID)
       .set({ paperId: PAPER_ID, savedAt: "2026-01-01T00:00:00Z" });
-    const projectRef = db.collection("users").doc(ALICE).collection("projects").doc("proj1");
-    await projectRef.set({ projectId: "proj1", slug: "p", paperCount: 1 });
+    const projectRef = db.collection("projects").doc("proj1");
+    await projectRef.set({
+      stableId: "proj1", id: "p", name: "P", ownerUid: ALICE,
+      memberUids: [ALICE], visibility: "private", paperCount: 1,
+    });
     await projectRef.collection("projectPapers").doc(PAPER_ID)
-      .set({ paperId: PAPER_ID, projectId: "proj1", ownerUid: ALICE, addedAt: "x" });
+      .set({ paperId: PAPER_ID, projectStableId: "proj1", memberUids: [ALICE], addedAt: "x" });
 
     const res = await call("DELETE", `/${encodeURIComponent(PAPER_ID)}`, ALICE);
     expect(res.status).toBe(200);

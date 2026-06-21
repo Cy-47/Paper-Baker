@@ -3,7 +3,13 @@ import type {
   PaperMetadata,
   Project,
   ProjectManifest,
+  UserProfile,
 } from "@paper-baker/core";
+
+/** The caller's profile; `handle`/`displayName` are null before onboarding. */
+export type Me =
+  | UserProfile
+  | { uid: string; handle: null; displayName: null };
 
 export interface ApiClientConfig {
   baseUrl: string;
@@ -100,58 +106,77 @@ export class PaperBakerClient {
   // Projects
   // ---------------------------------------------------------------------------
 
+  /** List the projects the caller is a member of (owned + shared). */
   async listProjects(): Promise<Project[]> {
     return this.request<Project[]>("GET", "/projects");
   }
 
-  /** Fetch a single project by its stable id or its slug. */
-  async getProject(idOrSlug: string): Promise<Project> {
+  /** Fetch a single project by its global stable key. */
+  async getProject(stableId: string): Promise<Project> {
     return this.request<Project>(
       "GET",
-      `/projects/${encodeURIComponent(idOrSlug)}`,
+      `/projects/${encodeURIComponent(stableId)}`,
     );
   }
 
-  async createProject(
-    name: string,
-    description?: string,
-  ): Promise<Project> {
+  /** Resolve one of the caller's own projects by its user-facing id. */
+  async getMyProjectById(id: string): Promise<Project> {
+    return this.request<Project>(
+      "GET",
+      `/projects/lookup/${encodeURIComponent(id)}`,
+    );
+  }
+
+  /** Resolve a project by its `handle/id` remote coordinate (membership-gated). */
+  async getProjectByHandle(handle: string, id: string): Promise<Project> {
+    return this.request<Project>(
+      "GET",
+      `/projects/lookup/${encodeURIComponent(handle)}/${encodeURIComponent(id)}`,
+    );
+  }
+
+  /** Create a project; the server mints the global stableId + an owner-unique id. */
+  async createProject(name: string, description?: string): Promise<Project> {
     return this.request<Project>("POST", "/projects", { name, description });
   }
 
-  /**
-   * Idempotent create-with-id: ensure a project with this client-owned stable id
-   * exists under the caller's account, creating it (with a fresh unique slug) if
-   * absent. Used by `pb sync` to publish an offline project and to mirror an
-   * already-synced one onto a new account. Safe to call on every sync.
-   */
-  async putProject(
-    projectId: string,
-    name: string,
-    description?: string,
-  ): Promise<Project> {
-    return this.request<Project>(
-      "PUT",
-      `/projects/${encodeURIComponent(projectId)}`,
-      { name, description },
-    );
-  }
-
   async updateProject(
-    projectId: string,
+    stableId: string,
     updates: Partial<Pick<Project, "name" | "description">>,
   ): Promise<Project> {
     return this.request<Project>(
       "PATCH",
-      `/projects/${encodeURIComponent(projectId)}`,
+      `/projects/${encodeURIComponent(stableId)}`,
       updates,
     );
   }
 
-  async deleteProject(projectId: string): Promise<void> {
+  async deleteProject(stableId: string): Promise<void> {
     return this.request<void>(
       "DELETE",
-      `/projects/${encodeURIComponent(projectId)}`,
+      `/projects/${encodeURIComponent(stableId)}`,
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Identity (the caller's profile + public handle lookup)
+  // ---------------------------------------------------------------------------
+
+  /** The caller's profile (handle/displayName are null before onboarding). */
+  async getMe(): Promise<Me> {
+    return this.request<Me>("GET", "/me");
+  }
+
+  /** Claim/update the caller's handle and/or display name. */
+  async updateMe(updates: { handle?: string; displayName?: string }): Promise<UserProfile> {
+    return this.request<UserProfile>("PUT", "/me", updates);
+  }
+
+  /** Public profile lookup by handle. */
+  async getUserByHandle(handle: string): Promise<UserProfile> {
+    return this.request<UserProfile>(
+      "GET",
+      `/users/${encodeURIComponent(handle)}`,
     );
   }
 
@@ -159,31 +184,25 @@ export class PaperBakerClient {
   // Project papers
   // ---------------------------------------------------------------------------
 
-  async addPaperToProject(
-    projectId: string,
-    paperId: string,
-  ): Promise<void> {
+  async addPaperToProject(stableId: string, paperId: string): Promise<void> {
     return this.request<void>(
       "POST",
-      `/projects/${encodeURIComponent(projectId)}/papers`,
+      `/projects/${encodeURIComponent(stableId)}/papers`,
       { paperId },
     );
   }
 
-  async removePaperFromProject(
-    projectId: string,
-    paperId: string,
-  ): Promise<void> {
+  async removePaperFromProject(stableId: string, paperId: string): Promise<void> {
     return this.request<void>(
       "DELETE",
-      `/projects/${encodeURIComponent(projectId)}/papers/${encodeURIComponent(paperId)}`,
+      `/projects/${encodeURIComponent(stableId)}/papers/${encodeURIComponent(paperId)}`,
     );
   }
 
-  async getProjectManifest(projectId: string): Promise<ProjectManifest> {
+  async getProjectManifest(stableId: string): Promise<ProjectManifest> {
     return this.request<ProjectManifest>(
       "GET",
-      `/projects/${encodeURIComponent(projectId)}/manifest`,
+      `/projects/${encodeURIComponent(stableId)}/manifest`,
     );
   }
 

@@ -27,13 +27,46 @@ export interface PaperMetadata {
   sourceStatus: "available" | "pdf_only" | "pending" | "failed";
 }
 
+/**
+ * A user's public profile. The Firebase uid stays the internal key everywhere;
+ * `handle` is the public, unique, user-specified alias (the `handle` in
+ * `handle/id`) and `displayName` is the shown name. See DESIGN.md §3.2.
+ */
+export interface UserProfile {
+  uid: string;
+  handle: string;
+  displayName: string;
+  createdAt: string;
+}
+
+/** Project visibility. Only "private" exists today; sharing adds "public" later. */
+export type ProjectVisibility = "private";
+
 export interface Project {
-  projectId: string;
-  /** URL-safe handle derived from `name`, unique within the owner. */
-  slug: string;
+  /**
+   * Hidden, server-minted, globally-unique key — the durable Firestore doc id.
+   * Plumbing: lives in the CLI's config.json and the doc id, never typed by users.
+   */
+  stableId: string;
+  /**
+   * User-facing, owner-unique, renamable identifier — the `id` in `handle/id`,
+   * derived from `name`. This is what used to be called `slug`.
+   */
+  id: string;
+  /** Free-form display label. */
   name: string;
   description: string;
+  /** Sole source of truth for ownership. */
   ownerUid: string;
+  /** Denormalized display copy of the owner's handle (kept in sync off ownerUid). */
+  ownerHandle: string;
+  /**
+   * Everyone with access — just `[ownerUid]` today. Sharing appends member uids
+   * here; reads and rules authorize on membership (array-contains), so enabling
+   * sharing is additive with no rules change.
+   */
+  memberUids: string[];
+  visibility: ProjectVisibility;
   createdAt: string;
   updatedAt: string;
   paperCount: number;
@@ -50,22 +83,24 @@ export interface SavedPaper {
 }
 
 // A paper filed into a project — the single source of truth for the
-// project<->paper link. Stored at users/{uid}/projects/{projectId}/projectPapers/
-// {paperId}. `ownerUid` is denormalized so the web can read every membership in
-// one collectionGroup("projectPapers") query (filtered where ownerUid == uid);
-// `projectId` lets that query map each result back to its project without
+// project<->paper link. Stored at projects/{stableId}/projectPapers/{paperId}.
+// `memberUids` mirrors the parent project's members so the web can read every
+// membership in one collectionGroup("projectPapers") query (filtered
+// where memberUids array-contains uid), across owned and (later) shared projects;
+// `projectStableId` lets that query map each result back to its project without
 // walking the doc path.
 export interface ProjectPaper {
   paperId: string;
-  projectId: string;
-  ownerUid: string;
+  projectStableId: string;
+  memberUids: string[];
   addedAt: string;
 }
 
 export interface ProjectManifest {
-  projectId: string;
-  slug: string;
+  stableId: string;
+  id: string;
   name: string;
+  ownerHandle: string;
   papers: (PaperMetadata & { projectPaper: ProjectPaper })[];
 }
 

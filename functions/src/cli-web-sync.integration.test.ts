@@ -8,8 +8,9 @@ import type { Response } from "express";
 // cross-surface check is that the web's READ path — rules-gated Firestore
 // snapshots (@firebase/rules-unit-testing), the exact queries in
 // apps/web/src/lib/library.ts — sees what was written via the API. The shared
-// contract is users/{uid}/projects/{id} + its projectPapers subcollection, with
-// the global papers/{id} cache as the manifest's metadata source.
+// contract is the top-level projects/{stableId} + its projectPapers subcollection
+// (membership-gated by memberUids), with the global papers/{id} cache as the
+// manifest's metadata source.
 vi.mock("./middleware/auth.js", () => ({
   requireAuth: vi.fn(async (req: Request) => {
     const uid = req.headers["x-test-uid"] as string | undefined;
@@ -122,28 +123,28 @@ async function seedPaper(paperId: string, title = paperId): Promise<void> {
 
 // --- Web WRITES: through the backend API (library.ts → api-client). ----------
 
-/** library.ts → createProject (POST /projects, backend mints id + slug). */
+/** library.ts → createProject (POST /projects, backend mints stableId + id). */
 async function webCreateProject(
   uid: string,
   name: string,
-): Promise<{ projectId: string; slug: string }> {
+): Promise<{ stableId: string; id: string }> {
   const res = await projectsApiCall("POST", "/", uid, { name });
-  return { projectId: res.body.projectId as string, slug: res.body.slug as string };
+  return { stableId: res.body.stableId as string, id: res.body.id as string };
 }
 
 /**
  * library.ts → addPaperToProject: save to library (POST /library {source} →
- * resolve + thin savedPapers) then file (POST /projects/:id/papers). The paper's
- * metadata must already be cached in papers/ (seeded by the caller).
+ * resolve + thin savedPapers) then file (POST /projects/:stableId/papers). The
+ * paper's metadata must already be cached in papers/ (seeded by the caller).
  */
 async function webFilePaper(
   uid: string,
-  projectId: string,
+  stableId: string,
   paperId: string,
 ): Promise<void> {
   const arxivId = paperId.split(":")[1];
   await libraryApiCall("POST", "/", uid, { source: { type: "arxiv", id: arxivId } });
-  await projectsApiCall("POST", `/${projectId}/papers`, uid, { paperId });
+  await projectsApiCall("POST", `/${stableId}/papers`, uid, { paperId });
 }
 
 // --- Web READS: rules-gated client, the exact queries in library.ts. ---------
@@ -158,22 +159,23 @@ async function webSavedPapers(uid: string): Promise<string[]> {
   return snap.docs.map((d) => d.id);
 }
 
-/** library.ts → subscribeProjects (one-shot read of the owner's projects). */
-async function webProjects(uid: string): Promise<{ projectId: string; name: string }[]> {
-  const snap = await assertSucceeds(getDocs(collection(webDb(uid), "users", uid, "projects")));
+/** library.ts → subscribeProjects (one-shot read of the caller's projects). */
+async function webProjects(uid: string): Promise<{ stableId: string; name: string }[]> {
+  const q = query(collection(webDb(uid), "projects"), where("memberUids", "array-contains", uid));
+  const snap = await assertSucceeds(getDocs(q));
   return snap.docs.map((d) => ({
-    projectId: d.id,
+    stableId: d.id,
     name: (d.data().name as string) ?? "",
   }));
 }
 
-/** library.ts → subscribeMemberships (collectionGroup, owner-scoped). */
-async function webMemberships(uid: string): Promise<{ paperId: string; projectId: string }[]> {
-  const q = query(collectionGroup(webDb(uid), "projectPapers"), where("ownerUid", "==", uid));
+/** library.ts → subscribeMemberships (collectionGroup, membership-scoped). */
+async function webMemberships(uid: string): Promise<{ paperId: string; projectStableId: string }[]> {
+  const q = query(collectionGroup(webDb(uid), "projectPapers"), where("memberUids", "array-contains", uid));
   const snap = await assertSucceeds(getDocs(q));
   return snap.docs.map((d) => ({
     paperId: d.data().paperId as string,
-    projectId: d.data().projectId as string,
+    projectStableId: d.data().projectStableId as string,
   }));
 }
 
@@ -182,21 +184,20 @@ describe("web ↔ CLI data sync — shared projects + memberships", () => {
     const paperId = "arxiv:1706.03762";
     const created = await cli("POST", "/", ALICE, { name: "From The CLI" });
     expect(created.status).toBe(201);
-    const projectId = created.body.projectId as string;
-    const slug = created.body.slug as string;
+    const stableId = created.body.stableId as string;
 
     await seedPaper(paperId);
-    const add = await cli("POST", `/${slug}/papers`, ALICE, { paperId });
+    const add = await cli("POST", `/${stableId}/papers`, ALICE, { paperId });
     expect(add.status).toBe(201);
 
     // The web app (rules-gated) sees the project …
     const projects = await webProjects(ALICE);
-    expect(projects.map((p) => p.projectId)).toContain(projectId);
-    expect(projects.find((p) => p.projectId === projectId)?.name).toBe("From The CLI");
+    expect(projects.map((p) => p.stableId)).toContain(stableId);
+    expect(projects.find((p) => p.stableId === stableId)?.name).toBe("From The CLI");
 
     // … the membership via its collectionGroup query …
     const memberships = await webMemberships(ALICE);
-    expect(memberships).toContainEqual({ paperId, projectId });
+    expect(memberships).toContainEqual({ paperId, projectStableId: stableId });
 
     // … and the paper saved to the library (projectPaper ⊆ savedPapers), so it
     // shows up in the web Library, not just as a project membership.
@@ -207,17 +208,17 @@ describe("web ↔ CLI data sync — shared projects + memberships", () => {
     const paperId = "arxiv:1810.04805";
     await seedPaper(paperId, "BERT"); // resolved earlier, as the web save path assumes
 
-    const { projectId, slug } = await webCreateProject(ALICE, "From The Web");
-    await webFilePaper(ALICE, projectId, paperId);
+    const { stableId, id } = await webCreateProject(ALICE, "From The Web");
+    await webFilePaper(ALICE, stableId, paperId);
 
-    // The CLI resolves the web-created project by its stable id and by slug …
-    const byId = await cli("GET", `/${projectId}`, ALICE);
+    // The CLI resolves the web-created project by its stable key and by id …
+    const byId = await cli("GET", `/${stableId}`, ALICE);
     expect(byId.status).toBe(200);
-    expect(byId.body.slug).toBe("from-the-web");
-    expect((await cli("GET", `/${slug}`, ALICE)).status).toBe(200);
+    expect(byId.body.id).toBe("from-the-web");
+    expect((await cli("GET", `/lookup/${id}`, ALICE)).status).toBe(200);
 
     // … and the manifest surfaces the web-filed paper, joined to its metadata.
-    const manifest = await cli("GET", `/${projectId}/manifest`, ALICE);
+    const manifest = await cli("GET", `/${stableId}/manifest`, ALICE);
     expect(manifest.status).toBe(200);
     const papers = manifest.body.papers as { paperId: string; title: string }[];
     expect(papers.map((p) => p.paperId)).toEqual([paperId]);
@@ -227,9 +228,9 @@ describe("web ↔ CLI data sync — shared projects + memberships", () => {
   it("memberships stay per-user — one user's filing never leaks into another's view", async () => {
     const paperId = "arxiv:1706.03762";
     const created = await cli("POST", "/", ALICE, { name: "Alice Only" });
-    const slug = created.body.slug as string;
+    const stableId = created.body.stableId as string;
     await seedPaper(paperId);
-    await cli("POST", `/${slug}/papers`, ALICE, { paperId });
+    await cli("POST", `/${stableId}/papers`, ALICE, { paperId });
 
     // Bob, reading via the same owner-scoped collectionGroup query, sees nothing.
     expect(await webMemberships("bob-uid")).toEqual([]);

@@ -10,7 +10,7 @@ import ProjectChips from "./ProjectChips";
 import PaperRow from "./PaperRow";
 import SaveButton from "./SaveButton";
 
-export default function AddToProject({ projectId }: { projectId: string }) {
+export default function AddToProject({ stableId }: { stableId: string }) {
   const { library, itemFor, isSaved } = useData();
   const [q, setQ] = useState("");
   const [arxivResults, setArxivResults] = useState<PaperMetadata[]>([]);
@@ -19,7 +19,7 @@ export default function AddToProject({ projectId }: { projectId: string }) {
   const f = q.trim().toLowerCase();
   const libMatches = f
     ? library
-        .filter((i) => !(i.projectIds ?? []).includes(projectId))
+        .filter((i) => !(i.projectIds ?? []).includes(stableId))
         .filter(
           (i) =>
             i.title.toLowerCase().includes(f) ||
@@ -47,10 +47,10 @@ export default function AddToProject({ projectId }: { projectId: string }) {
 
   const addExisting = (paperId: string) => {
     const item = itemFor(paperId);
-    if (item) addPaperToProject(projectId, item);
+    if (item) addPaperToProject(stableId, item);
   };
   const saveAndAdd = (p: PaperMetadata) => {
-    addPaperToProject(projectId, p);
+    addPaperToProject(stableId, p);
   };
 
   return (

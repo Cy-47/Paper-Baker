@@ -82,7 +82,7 @@ export default function AppShell() {
       const project = await createProject(name);
       setNewName("");
       setCreating(false);
-      navigate(`/projects/${project.slug}`);
+      navigate(`/projects/${project.stableId}`);
     } finally {
       creatingProject.current = false;
     }
@@ -140,9 +140,9 @@ export default function AppShell() {
         <p className="px-2.5 py-1 text-xs text-[var(--muted)]">No projects yet</p>
       )}
       {projects.map((p) => (
-        <NavLink key={p.projectId} to={`/projects/${p.slug}`} className={navClass}>
+        <NavLink key={p.stableId} to={`/projects/${p.stableId}`} className={navClass}>
           <span className="flex-1 truncate">{p.name}</span>
-          <span className="text-[11px] text-[var(--muted)]">{countFor(p.projectId)}</span>
+          <span className="text-[11px] text-[var(--muted)]">{countFor(p.stableId)}</span>
         </NavLink>
       ))}
 
