@@ -170,7 +170,10 @@ export function swapBinary(
 ): { oldPath?: string } {
   const dir = path.dirname(target);
   const tmpDir = fs.mkdtempSync(path.join(dir, ".pb-update-"));
-  const tmp = path.join(tmpDir, "pb");
+  // Keep the target's extension (".exe" on Windows): Windows cannot execute an
+  // extensionless file, so the validate-before-swap `--version` check would
+  // otherwise fail with ENOENT and abort every update.
+  const tmp = path.join(tmpDir, `pb${path.extname(target)}`);
 
   try {
     fs.writeFileSync(tmp, buf, { mode: 0o755 });
