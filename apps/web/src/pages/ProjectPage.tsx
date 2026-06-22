@@ -5,6 +5,7 @@ import { Button } from "@heroui/react";
 import { useData } from "../hooks/useData";
 import { removePaperFromProject, renameProject } from "../lib/library";
 import AddPaperModal from "../components/AddPaperModal";
+import ConfirmModal from "../components/ConfirmModal";
 import PaperRow from "../components/PaperRow";
 import ProjectChips from "../components/ProjectChips";
 
@@ -18,6 +19,9 @@ export default function ProjectPage() {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [copied, setCopied] = useState(false);
+  const [pendingRemoval, setPendingRemoval] = useState<{ paperId: string; title: string } | null>(
+    null,
+  );
 
   // The URL path carries the immutable `stableId` (the human `id` is re-derived
   // from the name on every rename, so it can't be the route key). Resolve it to
@@ -123,6 +127,22 @@ export default function ProjectPage() {
 
       {adding && <AddPaperModal stableId={stableId} onClose={() => setAdding(false)} />}
 
+      {pendingRemoval && (
+        <ConfirmModal
+          title="Remove paper from project?"
+          message={
+            <>
+              “{pendingRemoval.title}” will be removed from{" "}
+              <span className="text-[var(--foreground)]">{project?.name}</span>. It stays in your
+              library and any other projects.
+            </>
+          }
+          confirmLabel="Remove"
+          onConfirm={() => removeFromProject(pendingRemoval.paperId)}
+          onClose={() => setPendingRemoval(null)}
+        />
+      )}
+
       {papers.length === 0 ? (
         <p className="mt-8 text-sm text-[var(--muted)]">
           No papers yet. Use “Add paper” to pull from your library or arxiv.
@@ -161,7 +181,7 @@ export default function ProjectPage() {
                     variant="ghost"
                     size="sm"
                     aria-label="Remove from this project"
-                    onPress={() => removeFromProject(i.paperId)}
+                    onPress={() => setPendingRemoval({ paperId: i.paperId, title: i.title })}
                   >
                     <FolderMinus size={16} />
                   </Button>

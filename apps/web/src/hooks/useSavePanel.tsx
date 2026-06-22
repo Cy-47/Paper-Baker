@@ -2,6 +2,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -59,15 +60,20 @@ function Panel({ paper, onClose }: { paper: PaperMetadata; onClose: () => void }
     else addPaperToProject(stableId, paper);
   };
 
+  // Guards against a double create when blur fires right after Enter (or the
+  // Plus button), while the first request is still in flight.
+  const creatingProject = useRef(false);
   const addProject = async () => {
     const name = newName.trim();
-    if (!name) return;
+    if (!name || creatingProject.current) return;
+    creatingProject.current = true;
     setAdding(true);
     try {
       const project = await createProject(name);
       await addPaperToProject(project.stableId, paper);
       setNewName("");
     } finally {
+      creatingProject.current = false;
       setAdding(false);
     }
   };
@@ -125,6 +131,7 @@ function Panel({ paper, onClose }: { paper: PaperMetadata; onClose: () => void }
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && addProject()}
+                  onBlur={() => newName.trim() && addProject()}
                   fullWidth
                 />
                 <Button
