@@ -1,4 +1,4 @@
-import { onRequest, type Request } from "firebase-functions/v2/https";
+import type { Request } from "firebase-functions/v2/https";
 import {
   getFirestore,
   FieldValue,
@@ -158,10 +158,6 @@ export async function handleProjectsRequest(
     res.status(500).json({ error: "Internal server error" });
   }
 }
-
-// invoker: "public" so Hosting can reach it unauthenticated; the handler
-// enforces app-level auth via requireAuth.
-export const projectsApi = onRequest({ cors: true, invoker: "public" }, handleProjectsRequest);
 
 // ---------------------------------------------------------------------------
 // Route handlers

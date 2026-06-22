@@ -1,4 +1,4 @@
-import { onRequest, type Request } from "firebase-functions/v2/https";
+import type { Request } from "firebase-functions/v2/https";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import type { Response } from "express";
 import type { Source } from "@paper-baker/core";
@@ -58,10 +58,6 @@ export async function handleLibraryRequest(
     res.status(500).json({ error: "Internal server error" });
   }
 }
-
-// invoker: "public" so Hosting can reach it unauthenticated; the handler
-// enforces app-level auth via requireAuth.
-export const libraryApi = onRequest({ cors: true, invoker: "public" }, handleLibraryRequest);
 
 // ---------------------------------------------------------------------------
 // Route handlers

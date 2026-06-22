@@ -3,7 +3,6 @@ import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
-import { API_PROXY_MOUNTS } from "./src/dev-proxy";
 
 // Copy the repo-root installers into the build output so Firebase Hosting serves
 // them at /install.sh and /install.ps1 — i.e.
@@ -36,24 +35,18 @@ export default defineConfig({
       ? { port: Number(process.env.E2E_WEB_PORT), strictPort: true }
       : {}),
     proxy: {
-      // In production, Firebase Hosting rewrites /api/<fn>/** to each Cloud
-      // Function. Local dev/e2e has no hosting layer, so map the same
-      // same-origin /api/* paths onto the Functions emulator (one entry per
-      // function). The handlers' routePath() tolerates the stripped prefix, so
-      // routing is identical to production.
-      ...Object.fromEntries(
-        API_PROXY_MOUNTS.map(({ mount, fn }) => [
-          `/api/${mount}`,
-          {
-            // Defaults to the standard Functions emulator; the e2e suite sets
-            // E2E_FUNCTIONS_PORT to point at its isolated emulator instead.
-            target: `http://127.0.0.1:${process.env.E2E_FUNCTIONS_PORT ?? 5001}`,
-            changeOrigin: true,
-            rewrite: (path: string) =>
-              path.replace(`/api/${mount}`, `/paper-baker/us-central1/${fn}`),
-          },
-        ]),
-      ),
+      // Production routes /api/** to the single `api` Cloud Function via a Firebase
+      // Hosting rewrite. Local dev/e2e has no hosting layer, so forward the same
+      // /api/** to that function on the Functions emulator. The function receives
+      // the full "/api/..." path (just like behind the prod rewrite), so routing
+      // is identical in dev and prod — one proxy, one rewrite, no per-route list.
+      "/api": {
+        // Defaults to the standard Functions emulator; the e2e suite sets
+        // E2E_FUNCTIONS_PORT to point at its isolated emulator instead.
+        target: `http://127.0.0.1:${process.env.E2E_FUNCTIONS_PORT ?? 5001}`,
+        changeOrigin: true,
+        rewrite: (path: string) => `/paper-baker/us-central1/api${path}`,
+      },
     },
   },
 });

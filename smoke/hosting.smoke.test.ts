@@ -42,7 +42,7 @@ async function postJson(
 }
 
 describe("hosting smoke (rewrites + built functions bundle)", () => {
-  it("POST /api/device/code reaches deviceApi — proves the bundle loaded and the rewrite resolves", async () => {
+  it("POST /api/device/code reaches the api gateway (device route) — proves the bundle loaded and the rewrite resolves", async () => {
     const res = await postJson("/api/device/code", {
       device: { hostname: "smoke", platform: "test" },
     });

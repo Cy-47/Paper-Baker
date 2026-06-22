@@ -1,4 +1,4 @@
-import { onRequest, type Request } from "firebase-functions/v2/https";
+import type { Request } from "firebase-functions/v2/https";
 import { getFirestore } from "firebase-admin/firestore";
 import type { Response } from "express";
 import type { UserProfile } from "@paper-baker/core";
@@ -63,10 +63,6 @@ export async function handleUsersRequest(req: Request, res: Response): Promise<v
     res.status(500).json({ error: "Internal server error" });
   }
 }
-
-// invoker: "public" so Hosting can reach it unauthenticated; the handler enforces
-// app-level auth via requireAuth.
-export const usersApi = onRequest({ cors: true, invoker: "public" }, handleUsersRequest);
 
 // ---------------------------------------------------------------------------
 

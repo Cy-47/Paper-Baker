@@ -7,18 +7,7 @@
     "public": "apps/web/dist",
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
     "rewrites": [
-      { "source": "/api/device", "function": "deviceApi" },
-      { "source": "/api/device/**", "function": "deviceApi" },
-      { "source": "/api/projects", "function": "projectsApi" },
-      { "source": "/api/projects/**", "function": "projectsApi" },
-      { "source": "/api/papers", "function": "papersApi" },
-      { "source": "/api/papers/**", "function": "papersApi" },
-      { "source": "/api/library", "function": "libraryApi" },
-      { "source": "/api/library/**", "function": "libraryApi" },
-      { "source": "/api/me", "function": "usersApi" },
-      { "source": "/api/me/**", "function": "usersApi" },
-      { "source": "/api/users", "function": "usersApi" },
-      { "source": "/api/users/**", "function": "usersApi" },
+      { "source": "/api/**", "function": "api" },
       { "source": "**", "destination": "/index.html" }
     ]
   },

@@ -1,21 +1,26 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { API_PROXY_MOUNTS } from "./dev-proxy";
 
 // ---------------------------------------------------------------------------
 // Production-parity guards.
 //
 // Several prod-only outages slipped through because the dev/emulator setup is
 // more forgiving than production:
-//   - the web searched arXiv via a `/arxiv-api` Vite dev proxy that has no
+//   - the web searched arXiv via a `/arxiv-api` Vite dev proxy that had no
 //     Firebase Hosting rewrite, so in prod that path fell through to index.html;
+//   - the dev proxy and the firebase.json rewrites listed routes separately and
+//     silently drifted (/api/me was prod-only, /arxiv-api was dev-only);
 //   - a collectionGroup query needed a COLLECTION_GROUP index that the Firestore
 //     emulator silently doesn't require, so it only failed once deployed.
 //
 // These are config-parity bugs: nothing in the *code* is wrong, the dev and prod
 // environments just disagree. The emulator can't catch them, so we assert the
 // invariants directly against the committed config files. Fast + hermetic.
+//
+// The first class is now mostly designed away: all backend calls go through a
+// single `/api/**` → `api` gateway (one Hosting rewrite, one Vite proxy, no
+// per-route list to keep in sync). These tests lock that shape in.
 // ---------------------------------------------------------------------------
 
 const repoFile = (rel: string) =>
@@ -27,53 +32,64 @@ interface Rewrite {
   destination?: string;
 }
 
-function firebaseRewrites(): Rewrite[] {
-  const json = JSON.parse(repoFile("firebase.json")) as {
+function hostingRewrites(file: string): Rewrite[] {
+  const json = JSON.parse(repoFile(file)) as {
     hosting?: { rewrites?: Rewrite[] };
   };
   return json.hosting?.rewrites ?? [];
 }
 
-// The SPA catch-all serves index.html for any unmatched path — it "matches"
-// everything, so it must be excluded when asking "is this path backed by a real
-// server in prod?".
 const isSpaCatchAll = (r: Rewrite) =>
   r.source === "**" || (r.destination ?? "").endsWith("index.html");
 
-describe("routing parity: dev proxy ⊆ prod rewrites", () => {
-  // API_PROXY_MOUNTS is the canonical list of same-origin paths the web expects a
-  // real backend to serve; the dev server proxies exactly these (vite.config.ts
-  // builds its proxy from this list). In production there is no Vite layer —
-  // Firebase Hosting serves those paths via `rewrites`. If a path is proxied in
-  // dev but has no prod rewrite, it works under `pnpm dev` and 404s/SPA-falls-
-  // through once deployed. Every proxy path MUST have a matching prod rewrite.
-  const proxyPaths = API_PROXY_MOUNTS.map(({ mount }) => `/api/${mount}`);
+describe.each(["firebase.json", "firebase.test.json"])(
+  "routing parity: %s serves /api via the gateway",
+  (file) => {
+    const rewrites = hostingRewrites(file);
 
-  const rewrites = firebaseRewrites().filter((r) => !isSpaCatchAll(r));
+    it("routes /api/** to the api function", () => {
+      const apiRewrite = rewrites.find((r) => r.source === "/api/**");
+      expect(
+        apiRewrite,
+        `${file} must rewrite /api/** to a Cloud Function so same-origin API ` +
+          `calls reach the backend instead of falling through to the SPA.`,
+      ).toBeDefined();
+      expect(apiRewrite!.function).toBe("api");
+    });
 
-  const servedInProd = (proxyPath: string) =>
-    rewrites.some(
-      (r) =>
-        r.source === proxyPath ||
-        r.source === `${proxyPath}/**` ||
-        r.source.startsWith(`${proxyPath}/`),
-    );
+    it("places the /api rewrite before the SPA catch-all (order matters)", () => {
+      const apiIdx = rewrites.findIndex((r) => r.source === "/api/**");
+      const spaIdx = rewrites.findIndex(isSpaCatchAll);
+      expect(apiIdx).toBeGreaterThanOrEqual(0);
+      expect(spaIdx).toBeGreaterThanOrEqual(0);
+      // A catch-all ahead of /api/** would swallow API calls into index.html.
+      expect(apiIdx).toBeLessThan(spaIdx);
+    });
 
-  it("has at least one proxy path to check (guards against a no-op test)", () => {
-    expect(proxyPaths.length).toBeGreaterThan(0);
+    it("has no leftover per-function /api rewrites (drift surface)", () => {
+      const strays = rewrites.filter(
+        (r) => r.source.startsWith("/api/") && r.source !== "/api/**",
+      );
+      expect(strays, `unexpected per-route rewrites: ${JSON.stringify(strays)}`).toEqual(
+        [],
+      );
+    });
+  },
+);
+
+describe("routing parity: the dev proxy forwards /api to the same gateway", () => {
+  // Read vite.config.ts as text (importing it pulls in the build plugins). The
+  // dev server must proxy /api so a path that works deployed also works under
+  // `pnpm dev`; with a single /api proxy there is no per-route list to drift.
+  const viteConfig = repoFile("apps/web/vite.config.ts");
+
+  it('proxies "/api" in the Vite dev server', () => {
+    expect(viteConfig).toMatch(/proxy:\s*\{[\s\S]*["']\/api["']\s*:/);
   });
 
-  it.each(proxyPaths)(
-    "dev proxy %s is served by a production Hosting rewrite",
-    (proxyPath) => {
-      expect(
-        servedInProd(proxyPath),
-        `Vite proxies "${proxyPath}" in dev, but firebase.json has no Hosting ` +
-          `rewrite for it — in production that path falls through to the SPA ` +
-          `(index.html). Add a rewrite, or stop relying on the proxy in prod.`,
-      ).toBe(true);
-    },
-  );
+  it("forwards to the api function on the emulator", () => {
+    expect(viteConfig).toContain("/paper-baker/us-central1/api");
+  });
 });
 
 describe("Firestore index parity: required indexes are declared", () => {

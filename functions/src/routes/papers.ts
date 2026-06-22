@@ -1,4 +1,4 @@
-import { onRequest, type Request } from "firebase-functions/v2/https";
+import type { Request } from "firebase-functions/v2/https";
 import { getFirestore } from "firebase-admin/firestore";
 import type { Response } from "express";
 import type { PaperMetadata } from "@paper-baker/core";
@@ -82,10 +82,6 @@ export function sendRateLimited(res: Response, err: unknown): boolean {
   }
   return false;
 }
-
-// invoker: "public" so Hosting can reach it unauthenticated; the handler
-// enforces app-level auth via requireAuth.
-export const papersApi = onRequest({ cors: true, invoker: "public" }, handlePapersRequest);
 
 // ---------------------------------------------------------------------------
 // Route handlers

@@ -1,4 +1,4 @@
-import { onRequest, type Request } from "firebase-functions/v2/https";
+import type { Request } from "firebase-functions/v2/https";
 import {
   getFirestore,
   type CollectionReference,
@@ -172,10 +172,6 @@ export async function handleDeviceRequest(
     res.status(500).json({ error: "Internal server error" });
   }
 }
-
-// invoker: "public" so Firebase Hosting (and the CLI) can reach the function
-// unauthenticated — app-level auth is enforced in the handler via requireAuth.
-export const deviceApi = onRequest({ cors: true, invoker: "public" }, handleDeviceRequest);
 
 // ---------------------------------------------------------------------------
 // Route handlers
