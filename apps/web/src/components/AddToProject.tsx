@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { Plus } from "lucide-react";
 import { Button, Card, Input, Spinner } from "@heroui/react";
-import { arxiv } from "../lib/arxiv";
 import { getApiClient } from "../lib/api";
 import { useData } from "../hooks/useData";
 import { addPaperToProject } from "../lib/library";
@@ -34,12 +33,13 @@ export default function AddToProject({ stableId }: { stableId: string }) {
     if (!query) return;
     setSearching(true);
     try {
-      // Free-text search via the backend so results warm the papers/ cache; an
-      // ID/URL paste stays direct (single paper, cached on save anyway).
+      // Both paths go through the backend (arXiv has no CORS for the browser and
+      // there is no prod proxy): free text → search, an ID/URL paste → resolve.
       const id = parseArxivId(query);
+      const client = await getApiClient();
       const res = id
-        ? ([await arxiv.fetchMetadata(id)].filter(Boolean) as PaperMetadata[])
-        : await (await getApiClient()).searchPapers(query, 8);
+        ? [await client.resolvePaper({ type: "arxiv", id })]
+        : await client.searchPapers(query, 8);
       setArxivResults(res);
     } catch (err) {
       setArxivResults([]);

@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { BookOpenText, ArrowUpRight } from "lucide-react";
 import { Input, Spinner } from "@heroui/react";
-import { arxiv } from "../lib/arxiv";
 import { getApiClient } from "../lib/api";
 import { saveToLibrary } from "../lib/library";
 import { useData } from "../hooks/useData";
@@ -36,14 +35,16 @@ export default function FindPage() {
       setLoading(true);
       setError("");
       try {
-        // Free-text search goes through the backend so its results warm the
-        // shared papers/ cache (a later save/add becomes a pure cache hit). An
-        // ID/URL paste stays on the direct path — it's a single paper, and
-        // saving it caches it anyway.
+        // Both paths go through the backend: it has arXiv's User-Agent + the
+        // global rate limiter, and warms the shared papers/ cache so a later
+        // save/add is a pure cache hit. (The browser can't call arXiv directly —
+        // no CORS — and there is no prod proxy for it.) Free text → search; an
+        // ID/URL paste → resolve that single paper.
         const id = parseArxivId(urlQ);
+        const client = await getApiClient();
         const res = id
-          ? ([await arxiv.fetchMetadata(id)].filter(Boolean) as PaperMetadata[])
-          : await (await getApiClient()).searchPapers(urlQ, 20);
+          ? [await client.resolvePaper({ type: "arxiv", id })]
+          : await client.searchPapers(urlQ, 20);
         if (cancelled) return;
         setResults(res);
         if (!res.length) setError("No papers found.");
