@@ -9,7 +9,9 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     include: ["smoke/**/*.smoke.test.ts"],
-    exclude: ["**/node_modules/**", "**/dist/**"],
+    // The production smoke hits the LIVE deploy over HTTPS, not the emulator —
+    // it has its own config (vitest.prod.config.ts) / script (`pnpm test:prod`).
+    exclude: ["**/node_modules/**", "**/dist/**", "smoke/prod.smoke.test.ts"],
     testTimeout: 30000,
     hookTimeout: 30000,
   },

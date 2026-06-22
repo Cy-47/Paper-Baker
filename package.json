@@ -5,7 +5,7 @@
   "packageManager": "pnpm@9.15.9",
   "scripts": {
     "build": "pnpm -r build",
-    "deploy:prod": "pnpm build && firebase deploy --project paper-baker",
+    "deploy:prod": "pnpm build && ./node_modules/.bin/firebase deploy --project paper-baker && pnpm test:prod",
     "dev:web": "cd apps/web && exec ./node_modules/.bin/vite",
     "dev:functions": "pnpm --filter @paper-baker/functions dev",
     "emulators": "PATH=\"/opt/homebrew/opt/openjdk/bin:$PATH\" firebase emulators:start --only auth,firestore --project paper-baker",
@@ -20,6 +20,7 @@
     "test:rules": "PATH=\"/opt/homebrew/opt/openjdk/bin:$PATH\" firebase emulators:exec --config firebase.test.json --only firestore --project paper-baker 'vitest run --config vitest.rules.config.ts'",
     "test:functions": "PATH=\"/opt/homebrew/opt/openjdk/bin:$PATH\" firebase emulators:exec --config firebase.test.json --only auth,firestore --project paper-baker 'vitest run --config vitest.functions.config.ts'",
     "test:e2e": "bash scripts/e2e.sh",
+    "test:prod": "vitest run --config vitest.prod.config.ts",
     "test:smoke": "pnpm --filter @paper-baker/functions build && pnpm --filter @paper-baker/web build && PATH=\"/opt/homebrew/opt/openjdk/bin:$PATH\" PAPERBAKER_WEB_URL=\"http://localhost:5173\" PAPERBAKER_HOSTING_URL=\"http://127.0.0.1:5150\" firebase emulators:exec --config firebase.test.json --only auth,firestore,functions,hosting --project paper-baker 'vitest run --config vitest.smoke.config.ts'"
   },
   "devDependencies": {
