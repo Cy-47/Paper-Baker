@@ -16,6 +16,19 @@ export interface ApiClientConfig {
   token?: string; // Firebase ID token or API key
 }
 
+/**
+ * Thrown for any non-2xx response. Carries the HTTP `status` so callers can
+ * distinguish expected outcomes from real failures — e.g. a 404 from
+ * resolvePaper means "arXiv has no such paper" (an empty result), not an error
+ * to surface. `message` keeps the backend's `{ error }` text plus "(HTTP NNN)".
+ */
+export class ApiError extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
 export class PaperBakerClient {
   private baseUrl: string;
   private token?: string;
@@ -62,7 +75,7 @@ export class PaperBakerClient {
       } catch {
         /* non-JSON body — keep the raw text */
       }
-      throw new Error(`${detail || "request failed"} (HTTP ${res.status})`);
+      throw new ApiError(res.status, `${detail || "request failed"} (HTTP ${res.status})`);
     }
 
     // 204 No Content — nothing to parse

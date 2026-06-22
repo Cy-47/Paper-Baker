@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { Plus } from "lucide-react";
 import { Button, Input, Modal, Spinner } from "@heroui/react";
-import { getApiClient } from "../lib/api";
+import { findPapers } from "../lib/search";
 import { useData } from "../hooks/useData";
 import { addPaperToProject } from "../lib/library";
 import { notifyError } from "../lib/notify";
-import { parseArxivId, type PaperMetadata } from "@paper-baker/core";
+import { type PaperMetadata } from "@paper-baker/core";
 import ProjectChips from "./ProjectChips";
 import PaperRow from "./PaperRow";
 import SaveButton from "./SaveButton";
@@ -44,14 +44,7 @@ export default function AddPaperModal({
     if (!query) return;
     setSearching(true);
     try {
-      // Both paths go through the backend (arXiv has no CORS for the browser and
-      // there is no prod proxy): free text → search, an ID/URL paste → resolve.
-      const id = parseArxivId(query);
-      const client = await getApiClient();
-      const res = id
-        ? [await client.resolvePaper({ type: "arxiv", id })]
-        : await client.searchPapers(query, 8);
-      setArxivResults(res);
+      setArxivResults(await findPapers(query, 8));
     } catch (err) {
       setArxivResults([]);
       notifyError("arXiv search failed", err);
