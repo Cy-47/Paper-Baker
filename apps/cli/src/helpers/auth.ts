@@ -121,13 +121,18 @@ function tryOpenBrowser(url: string): void {
 export interface DeviceLoginOptions {
   log?: (message: string) => void;
   /**
-   * Decide whether to open the verification URL in a browser. Called after the
-   * URL + code are printed and before polling begins; return true to open it.
-   * This is where the command does its interactive "Press Enter to open…" prompt
-   * — keeping this helper agent-safe: omit the callback and login never blocks
-   * on stdin and never spawns a browser.
+   * Decide whether to open the verification URL in a browser. Called as polling
+   * begins (concurrently — see deviceLogin); return true to open it. This is
+   * where the command does its interactive "Press Enter to open…" prompt. The
+   * `signal` aborts once the flow is approved/expired, so an interactive prompt
+   * can stop waiting on stdin when the user approved in the browser without ever
+   * pressing Enter. Keeping this helper agent-safe: omit the callback and login
+   * never blocks on stdin and never spawns a browser.
    */
-  openBrowser?: (verificationUri: string) => boolean | Promise<boolean>;
+  openBrowser?: (
+    verificationUri: string,
+    signal: AbortSignal,
+  ) => boolean | Promise<boolean>;
 }
 
 /**
@@ -144,23 +149,40 @@ export async function deviceLogin(
   log("");
   log(bang(`First copy your one-time code: ${bold(start.userCode)}`));
 
-  // The callback owns the "open the URL" line — it may prompt ("Press Enter to
-  // open…") and block until the user acts, so it's awaited before we poll. When
-  // no callback is supplied (embedded/agent use) we still surface the URL so the
-  // code can be entered by hand.
-  if (opts.openBrowser) {
-    if (await opts.openBrowser(start.verificationUri)) {
-      tryOpenBrowser(start.verificationUri);
-    }
-  } else {
-    log(`Open ${start.verificationUri} in your browser to continue.`);
-  }
+  // Poll concurrently with the "open the URL" prompt. The callback may block on
+  // stdin ("Press Enter to open…"), but the user can equally just open the link
+  // and approve in the browser — so polling must already be running, not gated
+  // behind a keypress, or the CLI stalls until Enter is finally pressed. Once
+  // the flow settles (approved/expired/error) we abort the prompt so it stops
+  // waiting on stdin. When no callback is supplied (embedded/agent use) we still
+  // surface the URL so the code can be entered by hand.
+  const poll = pollForToken(start.deviceCode, start.interval, start.expiresIn);
 
-  const { accessToken, uid } = await pollForToken(
-    start.deviceCode,
-    start.interval,
-    start.expiresIn,
+  const promptAbort = new AbortController();
+  // Settle (success or failure) ends the prompt; ignore the rejection here —
+  // it's surfaced to the caller via `await poll` below.
+  void poll.then(
+    () => promptAbort.abort(),
+    () => promptAbort.abort(),
   );
+
+  const prompt = (async () => {
+    if (opts.openBrowser) {
+      if (await opts.openBrowser(start.verificationUri, promptAbort.signal)) {
+        tryOpenBrowser(start.verificationUri);
+      }
+    } else {
+      log(`Open ${start.verificationUri} in your browser to continue.`);
+    }
+  })();
+  // The prompt rejects when aborted (user approved without pressing Enter) — a
+  // normal, expected outcome, so swallow it; never let it mask the poll result.
+  prompt.catch(() => {});
+
+  const { accessToken, uid } = await poll;
+  // Best-effort: let an already-resolved prompt finish so its readline restores
+  // the terminal before we print. Aborted/erroring prompts are already handled.
+  await prompt.catch(() => {});
 
   const cfg = loadGlobalConfig();
   cfg.accessToken = accessToken;

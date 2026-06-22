@@ -12,11 +12,19 @@ export function isInteractive(): boolean {
   return Boolean(stdin.isTTY && stdout.isTTY);
 }
 
-/** Ask a free-form question; returns the trimmed answer. */
-export async function promptLine(question: string): Promise<string> {
+/**
+ * Ask a free-form question; returns the trimmed answer. Pass a `signal` to
+ * cancel a pending question — `rl.question` rejects with an AbortError, which
+ * callers can catch (e.g. login aborts the "Press Enter" prompt once the device
+ * flow is approved out-of-band, so the CLI never stalls waiting on a keypress).
+ */
+export async function promptLine(
+  question: string,
+  signal?: AbortSignal,
+): Promise<string> {
   const rl = readline.createInterface({ input: stdin, output: stdout });
   try {
-    return (await rl.question(question)).trim();
+    return (await rl.question(question, signal ? { signal } : {})).trim();
   } finally {
     rl.close();
   }

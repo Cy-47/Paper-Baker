@@ -24,11 +24,11 @@ export function registerLoginCommands(program: Command): void {
       }
       try {
         const { uid } = await deviceLogin({
-          openBrowser: async (url) => {
+          openBrowser: async (url, signal) => {
             // --open: open straight away, no keypress. Agents/CI (no TTY): never
             // block on stdin and never open — just print the URL. Interactive
             // default (gh-style): offer to open on Enter so the user can eyeball
-            // the URL (or Ctrl-C and visit it by hand) before a browser launches.
+            // the URL (or just open it themselves) before a browser launches.
             if (opts.open === true) {
               console.log(`Opening ${url} in your browser...`);
               return true;
@@ -37,7 +37,14 @@ export function registerLoginCommands(program: Command): void {
               console.log(`Open ${url} in your browser to finish signing in.`);
               return false;
             }
-            await promptLine(`${bold("Press Enter")} to open ${url} in your browser... `);
+            // The signal aborts when the user approves out-of-band (opened the
+            // link themselves) — promptLine then rejects; treat that as "don't
+            // open", since a browser is already up. Only an actual Enter falls
+            // through to true.
+            await promptLine(
+              `${bold("Press Enter")} to open ${url} in your browser (or just open it yourself)... `,
+              signal,
+            );
             return true;
           },
         });

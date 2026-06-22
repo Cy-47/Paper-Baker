@@ -127,6 +127,26 @@ describe("device-link login", () => {
     expect(result.uid).toBe("alice-uid");
   });
 
+  it("polls (and completes) while the open-browser prompt is still blocking", async () => {
+    // Mirrors a user who opens the link themselves and approves without ever
+    // pressing Enter: the callback never resolves on its own. Login must still
+    // finish, and the pending prompt must be aborted so the CLI doesn't stall.
+    let aborted = false;
+    const result = await deviceLogin({
+      log: () => {},
+      openBrowser: (_url, signal) =>
+        // Block until the device flow aborts us (approval happened in browser).
+        new Promise<boolean>((_resolve, reject) => {
+          signal.addEventListener("abort", () => {
+            aborted = true;
+            reject(new Error("aborted"));
+          });
+        }),
+    });
+    expect(result.uid).toBe("alice-uid");
+    expect(aborted).toBe(true);
+  });
+
   it("reports device metadata so the web tab can label the connection", async () => {
     await deviceLogin({ log: () => {} });
     const device = (lastCodeBody?.device ?? {}) as Record<string, unknown>;
