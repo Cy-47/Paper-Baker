@@ -4,6 +4,7 @@ import { PaperBakerClient } from "@paper-baker/api-client";
 import type { PaperMetadata, Project } from "@paper-baker/core";
 import {
   getApiUrl,
+  getProjectDir,
   loadProjectConfig,
   saveProjectConfig,
   removeProjectConfig,
@@ -17,7 +18,7 @@ import {
   loadPapers,
   savePapers,
 } from "../helpers/project-files.js";
-import { reconcilePapers, papersInSync, type BindMode } from "../helpers/reconcile.js";
+import { reconcilePapers, autoBindMode, type BindMode } from "../helpers/reconcile.js";
 import { isInteractive, promptLine, promptChoice } from "../helpers/prompt.js";
 import { applyRootBrief } from "../helpers/root-brief.js";
 import { refreshDocsIfStale } from "../helpers/refresh-docs.js";
@@ -79,12 +80,24 @@ function parseTarget(target: string): { handle: string | null; id: string } {
 // it stays a local-only project; `pb sync` publishes it later.
 // ---------------------------------------------------------------------------
 
+/**
+ * Where the resolved project lives, phrased for an error message. Because
+ * `getProjectDir` walks up to the nearest ancestor project, the one we found may
+ * sit above the cwd — say so explicitly rather than claiming "this directory".
+ */
+function existingProjectLocation(): string {
+  const root = path.dirname(getProjectDir());
+  return root === process.cwd()
+    ? "this directory"
+    : `an ancestor directory (${root})`;
+}
+
 export async function runCreate(
   name: string | undefined,
   opts: { brief?: boolean } = {},
 ): Promise<void> {
   if (projectConfigExists()) {
-    console.error("Error: a Paper Baker project already exists in this directory.");
+    console.error(`Error: a Paper Baker project already exists in ${existingProjectLocation()}.`);
     process.exit(1);
   }
 
@@ -159,7 +172,7 @@ async function runBind(
     const cfg = loadProjectConfig()!;
     if (isSynced(cfg)) {
       console.error(
-        "Error: this directory is already bound to a remote project. Run `pb project unbind` first.",
+        `Error: ${existingProjectLocation()} is already bound to a remote project. Run \`pb project unbind\` first.`,
       );
       process.exit(1);
     }
@@ -190,17 +203,16 @@ async function runBind(
   if (!projectConfigExists()) scaffoldProjectFiles();
   const localPapers = loadPapers();
 
-  // Pick a reconciliation mode: explicit flag → as told; otherwise no-drift adopts
-  // remote, drift prompts (TTY) or hard-errors (CI).
+  // Pick a reconciliation mode: explicit flag → as told; otherwise an empty local
+  // folder or a no-drift set adopts remote, and real drift prompts (TTY) or
+  // hard-errors (CI).
   let mode: BindMode | null = opts.replaceLocal
     ? "replace-local"
     : opts.merge
       ? "merge"
-      : null;
+      : autoBindMode(localPapers, remotePapers);
   if (mode === null) {
-    if (papersInSync(localPapers, remotePapers)) {
-      mode = "replace-local";
-    } else if (isInteractive()) {
+    if (isInteractive()) {
       mode = (await promptChoice(
         `Local (${localPapers.length}) and remote (${remotePapers.length}) papers differ. Merge or replace local?`,
         ["merge", "replace-local"],

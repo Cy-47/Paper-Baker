@@ -5,7 +5,7 @@ import {
   ROOT_BRIEF_END,
   generateRootBrief,
 } from "@paper-baker/core";
-import { loadProjectConfig, saveProjectConfig } from "../config.js";
+import { getProjectDir, loadProjectConfig, saveProjectConfig } from "../config.js";
 import { isInteractive, promptLine } from "./prompt.js";
 
 // The brief's text lives in @paper-baker/core so the CLI (which writes it) and
@@ -37,7 +37,12 @@ const ROOT_AGENT_FILES = ["AGENTS.md", "CLAUDE.md"] as const;
 
 /** Absolute path to the root agent file we'd write: first existing, else AGENTS.md. */
 export function resolveRootAgentFile(cwd?: string): { file: string; name: string; existed: boolean } {
-  const root = cwd ?? process.cwd();
+  // The brief belongs at the PROJECT root — the directory containing paperbaker/,
+  // not the current working directory. Anchoring to `dirname(getProjectDir())`
+  // (which walks up to the real project) keeps the brief at the repo root even
+  // when a command — notably the post-command docs refresh — runs from a
+  // subdirectory or from inside paperbaker/ itself.
+  const root = path.dirname(getProjectDir(cwd));
   for (const name of ROOT_AGENT_FILES) {
     const file = path.join(root, name);
     if (fs.existsSync(file)) return { file, name, existed: true };

@@ -3,7 +3,6 @@ import * as path from "node:path";
 import { Command } from "commander";
 import type { PaperMetadata } from "@paper-baker/core";
 import {
-  findMainTexFileByContent,
   extractTexBody,
   stripTexComments,
   collectFigurePaths,
@@ -58,10 +57,13 @@ export function registerReadCommands(program: Command): void {
   // --- read ---
   program
     .command("read")
-    .description("Print tex source for a paper to stdout")
+    .description("Print a paper's full LaTeX source (every .tex file) to stdout")
     .argument("<paper-id>", "Paper ID (e.g. arxiv:2301.12345)")
-    .option("--concat", "Concatenate all .tex files instead of just main.tex")
-    .action((paperId: string, opts: { concat?: boolean }) => {
+    // `--concat` was once the opt-in for "all files"; that's now the only
+    // behavior. Kept as an accepted no-op so previously-documented invocations
+    // (`pb read <id> --concat`) don't start erroring.
+    .option("--concat", "(deprecated) no-op — every .tex is always printed")
+    .action((paperId: string) => {
       ensureProjectInit();
 
       const papers = loadPapers();
@@ -84,33 +86,17 @@ export function registerReadCommands(program: Command): void {
         process.exit(1);
       }
 
-      if (opts.concat) {
-        // Concatenate all .tex files
-        for (const file of texFiles) {
-          const rel = path.relative(sourceDir, file);
-          console.log(`%% --- ${rel} ---`);
-          console.log(fs.readFileSync(file, "utf-8"));
-          console.log();
-        }
-      } else {
-        // Find and print the main tex file. Use content-based detection (looks
-        // for \documentclass) so papers whose entry point isn't named main.tex
-        // — e.g. ms.tex, root.tex — still resolve correctly.
-        const contents = new Map<string, string>();
-        for (const f of texFiles) {
-          contents.set(path.relative(sourceDir, f), fs.readFileSync(f, "utf-8"));
-        }
-        const mainFile = findMainTexFileByContent(contents);
-        if (!mainFile) {
-          console.error("Error: Could not determine the main .tex file.");
-          console.error("Available .tex files:");
-          for (const f of contents.keys()) {
-            console.error(`  ${f}`);
-          }
-          console.error("Use --concat to print all files.");
-          process.exit(1);
-        }
-        console.log(contents.get(mainFile));
+      // Print every .tex truthfully — each under its source-relative path header,
+      // `\input`/`\include` left unexpanded. No attempt to guess a single "main"
+      // file or to inline includes: an agent follows `\input` to the sibling
+      // files the same way it follows an import, and never gets a silently
+      // partial paper (the entry file is often just a preamble + a list of
+      // \input{...}). For one-file papers this is simply that file.
+      for (const file of texFiles) {
+        const rel = path.relative(sourceDir, file);
+        console.log(`%% --- ${rel} ---`);
+        console.log(fs.readFileSync(file, "utf-8"));
+        console.log();
       }
     });
 

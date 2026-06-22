@@ -565,8 +565,14 @@ describe("CLI mutations land on the server immediately", () => {
       const res = await pbTry(["add", ARXIV_ID], work, token, cfg);
       expect(res.status).toBe(0); // local add still succeeds
       expect(res.stdout).toContain("Added:");
-      // The mirror failure is surfaced, not swallowed.
-      expect(`${res.stdout}${res.stderr}`).toMatch(/could not update the server/i);
+      // The mirror failure is surfaced as actionable, existence-neutral guidance
+      // (the deleted-vs-forbidden ambiguity is stated, not narrated), with the
+      // three remedies — not swallowed, not the old generic "run pb sync".
+      const out = `${res.stdout}${res.stderr}`;
+      expect(out).toMatch(/doesn't exist, or you/i);
+      expect(out).toMatch(/don't have access to it/i);
+      expect(out).toContain("pb unbind && pb sync");
+      expect(out).toContain("pb bind");
       // Local state reflects the add even though the server rejected it.
       expect(localPapers(work).map((p) => p.paperId)).toContain(PAPER_ID);
     } finally {

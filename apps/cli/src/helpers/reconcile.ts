@@ -38,6 +38,23 @@ export function reconcilePapers(
   };
 }
 
+/**
+ * The reconciliation mode that can be chosen without asking the user, or `null`
+ * when local and remote genuinely diverge and the caller must prompt (TTY) or
+ * hard-error (CI).
+ *
+ * An empty local folder — a fresh checkout, or a re-bind after `rm -rf
+ * paperbaker/` — has nothing to merge or lose, so it adopts the remote outright
+ * rather than presenting a no-op merge/replace choice.
+ */
+export function autoBindMode(
+  local: PaperMetadata[],
+  remote: PaperMetadata[],
+): BindMode | null {
+  if (local.length === 0 || papersInSync(local, remote)) return "replace-local";
+  return null;
+}
+
 /** True when local and remote hold the same set of paperIds (metadata aside). */
 export function papersInSync(
   local: PaperMetadata[],

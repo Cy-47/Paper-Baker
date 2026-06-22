@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { PaperMetadata } from "@paper-baker/core";
-import { reconcilePapers, papersInSync } from "./reconcile.js";
+import { reconcilePapers, papersInSync, autoBindMode } from "./reconcile.js";
 
 function paper(id: string, title = id): PaperMetadata {
   return {
@@ -59,5 +59,20 @@ describe("papersInSync", () => {
   });
   it("is true for two empty sets", () => {
     expect(papersInSync([], [])).toBe(true);
+  });
+});
+
+describe("autoBindMode", () => {
+  it("adopts remote for an empty local folder (fresh checkout / re-bind after rm -rf)", () => {
+    expect(autoBindMode([], [A, B, C])).toBe("replace-local");
+  });
+  it("adopts remote when both sides are empty", () => {
+    expect(autoBindMode([], [])).toBe("replace-local");
+  });
+  it("adopts remote when the id sets already match", () => {
+    expect(autoBindMode([A, B], [Bserver, A])).toBe("replace-local");
+  });
+  it("defers (null) when local has papers the remote lacks", () => {
+    expect(autoBindMode([A, B], [B, C])).toBeNull();
   });
 });

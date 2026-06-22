@@ -13,15 +13,16 @@ import {
   type ProjectConfig,
 } from "../config.js";
 import { resolveAuthToken } from "../helpers/auth.js";
-import { downloadAndExtractSource } from "../helpers/download.js";
+import { downloadSources } from "../helpers/download.js";
 import { writeProjectReadme } from "../helpers/project-readme.js";
-import { getSourceDir, ensureSourcesRepo } from "../helpers/sources.js";
+import { ensureSourcesRepo } from "../helpers/sources.js";
 import {
   projectConfigExists,
   loadPapers,
   savePapers,
 } from "../helpers/project-files.js";
 import { reconcilePapers } from "../helpers/reconcile.js";
+import { classifyProjectSyncError, syncFailureMessage } from "../helpers/sync-status.js";
 
 // ---------------------------------------------------------------------------
 // sync — the one verb that reconciles a project with the server.
@@ -105,27 +106,15 @@ async function ensureSourcesAndArtifacts(
   papers: PaperMetadata[],
   quiet: boolean,
 ): Promise<void> {
-  const info = quiet ? () => {} : (m: string) => console.log(m);
-
   ensureSourcesRepo();
-  let downloaded = 0;
-  for (const paper of papers) {
-    const sourceDir = getSourceDir(paper);
-    if (fs.existsSync(sourceDir)) continue;
+  const { failed } = await downloadSources(papers, { quiet });
 
-    if (paper.source.type === "arxiv") {
-      info(`Downloading source for ${paper.paperId}...`);
-      try {
-        await downloadAndExtractSource(paper.source.id, sourceDir);
-        downloaded++;
-      } catch (err) {
-        // A missing source is a real (recoverable) problem — surface it on
-        // stderr even in quiet mode.
-        console.warn(`  Could not download ${paper.paperId}: ${errMsg(err)}`);
-      }
-    }
-  }
-  if (downloaded > 0) info(`Downloaded ${downloaded} source(s).`);
+  // downloadSources flips a paper to `pdf_only` in place when its source can't be
+  // fetched. On the server path savePapers already ran (in syncWithServer, before
+  // the download), so persist again here when a failure changed the manifest —
+  // otherwise papers.json would keep "available" while the regenerated artifacts
+  // below reflect pdf_only.
+  if (failed.length > 0) savePapers(papers);
 
   const projectDir = getProjectDir();
   fs.writeFileSync(path.join(projectDir, "refs.bib"), renderBibtexFile(papers));
@@ -167,11 +156,7 @@ async function syncWithServer(
       );
       stableId = created.stableId;
     } catch (err) {
-      if (!quiet) {
-        console.warn(
-          `Could not reach the server (${errMsg(err)}). Syncing local state only.`,
-        );
-      }
+      if (!quiet) reportSyncFailure(err);
       return localPapers;
     }
   }
@@ -182,11 +167,7 @@ async function syncWithServer(
   try {
     manifest = await client.getProjectManifest(stableId!);
   } catch (err) {
-    if (!quiet) {
-      console.warn(
-        `Could not reach the server (${errMsg(err)}). Syncing local state only.`,
-      );
-    }
+    if (!quiet) reportSyncFailure(err);
     return localPapers;
   }
 
@@ -237,4 +218,19 @@ async function syncWithServer(
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Explain why a (non-quiet) sync couldn't reconcile with the server. A no-access
+ * binding or an auth problem gets the actionable guidance; a transient failure
+ * keeps the informative "reached nothing, staying local" line (sync still does
+ * its local-only pass after this returns).
+ */
+function reportSyncFailure(err: unknown): void {
+  const failure = classifyProjectSyncError(err);
+  if (failure === "transient") {
+    console.warn(`Could not reach the server (${errMsg(err)}). Syncing local state only.`);
+  } else {
+    console.warn(syncFailureMessage(failure, "Couldn't sync"));
+  }
 }

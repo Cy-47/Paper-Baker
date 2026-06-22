@@ -2,7 +2,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import { execSync } from "node:child_process";
-import { createThrottledFetch } from "@paper-baker/core";
+import { createThrottledFetch, type PaperMetadata } from "@paper-baker/core";
+import { getSourceDir } from "./sources.js";
 
 // Throttle e-print downloads too: same arXiv host, same "be nice" expectation.
 // Separate instance from the metadata API throttle — different endpoint, and a
@@ -88,4 +89,78 @@ export async function downloadAndExtractSource(
     // Clean up temp dir
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
+}
+
+// ---------------------------------------------------------------------------
+// Batch source download — the ONE place that turns "papers missing sources" into
+// downloads with progress. Shared by `pb add`, `pb sync`, and the post-bind
+// hydration so a download looks identical everywhere (see DESIGN.md §5.2): a
+// counted "Downloading sources… 12/70: arxiv:…" line per paper, a "Downloaded N
+// source(s)." summary, and a uniform warning that marks the paper `pdf_only` and
+// keeps going on failure.
+// ---------------------------------------------------------------------------
+
+export interface DownloadSourcesResult {
+  /** Sources newly fetched this pass. */
+  downloaded: number;
+  /** paperIds whose download failed — left as metadata-only (`pdf_only`). */
+  failed: string[];
+}
+
+export interface DownloadSourcesOptions {
+  /**
+   * Quiet auto-sync (the post-command hook). A no-work pass stays silent so a
+   * command's stdout (notably `--json`) is untouched, but real work is still
+   * reported — on stderr — so a cold hydration (e.g. 70 papers right after a
+   * bind) shows progress instead of looking hung.
+   */
+  quiet?: boolean;
+  /** Injectable for tests; defaults to the real throttled network fetch. */
+  download?: (arxivId: string, destDir: string) => Promise<void>;
+  /** Injectable for tests; defaults to "a source dir already exists on disk". */
+  hasSource?: (paper: PaperMetadata) => boolean;
+}
+
+/**
+ * Download the e-print source for every arxiv paper that's missing one. Papers
+ * that already have a source dir (and non-arxiv sources) are skipped, so this is
+ * safe to call on the whole project repeatedly. Mutates `sourceStatus` to
+ * `pdf_only` in place for any paper whose download fails; never throws.
+ */
+export async function downloadSources(
+  papers: PaperMetadata[],
+  opts: DownloadSourcesOptions = {},
+): Promise<DownloadSourcesResult> {
+  const quiet = opts.quiet ?? false;
+  const download = opts.download ?? downloadAndExtractSource;
+  const hasSource = opts.hasSource ?? ((p) => fs.existsSync(getSourceDir(p)));
+
+  const pending = papers.filter(
+    (p) => p.source.type === "arxiv" && !hasSource(p),
+  );
+  // Non-quiet → stdout; quiet-with-work → stderr (keeps piped/--json stdout clean).
+  const note = quiet
+    ? (m: string) => console.error(m)
+    : (m: string) => console.log(m);
+
+  const failed: string[] = [];
+  let downloaded = 0;
+  for (let i = 0; i < pending.length; i++) {
+    const paper = pending[i]!;
+    if (paper.source.type !== "arxiv") continue; // narrows the union; always true here
+    note(`Downloading sources… ${i + 1}/${pending.length}: ${paper.paperId}`);
+    try {
+      await download(paper.source.id, getSourceDir(paper));
+      downloaded++;
+    } catch (err) {
+      // A failed download is recoverable but real: surface it (always, even when
+      // quiet), keep the metadata, and move on.
+      paper.sourceStatus = "pdf_only";
+      failed.push(paper.paperId);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`  Could not download ${paper.paperId}: ${msg}; keeping metadata only.`);
+    }
+  }
+  if (downloaded > 0) note(`Downloaded ${downloaded} source(s).`);
+  return { downloaded, failed };
 }

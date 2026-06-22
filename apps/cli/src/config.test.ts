@@ -1,8 +1,8 @@
-import { mkdtempSync, rmSync, statSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, afterEach, describe, it, expect } from "vitest";
-import { loadGlobalConfig, saveGlobalConfig, getApiUrl } from "./config.js";
+import { loadGlobalConfig, saveGlobalConfig, getApiUrl, getProjectDir } from "./config.js";
 
 // Hermetic: PAPERBAKER_CONFIG_DIR redirects the global config at a tmp dir, so
 // these never touch the real ~/ config. The env overrides are read at call
@@ -53,6 +53,50 @@ describe("global config storage", () => {
       expect(statSync(join(dir, "config.json")).mode & 0o777).toBe(0o600);
     }
     expect(loadGlobalConfig().accessToken).toBe("second");
+  });
+});
+
+describe("getProjectDir — walk-up resolution", () => {
+  let root: string;
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "pb-proj-"));
+  });
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  // realpath both sides via the resolver: macOS tmpdir is a /var → /private/var
+  // symlink, and the walk-up returns paths under whatever `start` was passed, so
+  // we compare resolver output to resolver output rather than to a raw join.
+  it("finds the project from a nested subdirectory (and from inside paperbaker/)", () => {
+    const pbDir = join(root, "paperbaker");
+    mkdirSync(pbDir, { recursive: true });
+    writeFileSync(join(pbDir, "config.json"), "{}");
+
+    const deep = join(root, "src", "deep", "nested");
+    mkdirSync(deep, { recursive: true });
+
+    expect(getProjectDir(deep)).toBe(pbDir);
+    expect(getProjectDir(root)).toBe(pbDir);
+    expect(getProjectDir(pbDir)).toBe(pbDir); // even from inside paperbaker/ itself
+  });
+
+  it("falls back to <cwd>/paperbaker when no ancestor project exists", () => {
+    const fresh = join(root, "no", "project", "here");
+    mkdirSync(fresh, { recursive: true });
+    expect(getProjectDir(fresh)).toBe(join(fresh, "paperbaker"));
+  });
+
+  it("does not resolve to an ancestor that has paperbaker/ but no config.json (not yet a project)", () => {
+    // A scaffold-in-progress (papers.json but no config.json) must not capture a
+    // child cwd — create writes config.json last, so resolution stays at <cwd>.
+    const half = join(root, "paperbaker");
+    mkdirSync(half, { recursive: true });
+    writeFileSync(join(half, "papers.json"), "[]");
+
+    const child = join(root, "child");
+    mkdirSync(child, { recursive: true });
+    expect(getProjectDir(child)).toBe(join(child, "paperbaker"));
   });
 });
 

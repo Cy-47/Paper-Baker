@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it, expect } from "vitest";
@@ -132,6 +132,26 @@ describe("refreshRootBrief", () => {
     expect(res.status).toBe("absent");
     // Untouched — we bail before reading/rewriting.
     expect(readFileSync(join(dir, "AGENTS.md"), "utf-8")).toContain("\nx\n");
+  });
+
+  it("refreshes the brief at the PROJECT ROOT even when run from a subdirectory", () => {
+    // The brief lives at the repo root (next to paperbaker/), not at the cwd. A
+    // command run from a nested dir must still find and refresh it — otherwise the
+    // post-command docs refresh silently no-ops away from the root.
+    saveProjectConfig({ name: "Test" }, dir);
+    writeFileSync(
+      join(dir, "AGENTS.md"),
+      `# Notes\n\n${ROOT_BRIEF_BEGIN}\nOLD STALE TEXT\n${ROOT_BRIEF_END}\n`,
+    );
+    const deep = join(dir, "src", "deep");
+    mkdirSync(deep, { recursive: true });
+
+    const res = refreshRootBrief(deep);
+    expect(res.status).toBe("refreshed");
+    const out = readFileSync(join(dir, "AGENTS.md"), "utf-8");
+    expect(out).not.toContain("OLD STALE TEXT");
+    expect(out).toContain("paperbaker/README.md");
+    expect(out).toContain("# Notes");
   });
 });
 

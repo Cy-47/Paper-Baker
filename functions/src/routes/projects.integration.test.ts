@@ -362,6 +362,38 @@ describe("papers: add / remove / manifest", () => {
     expect((await call("POST", `/${p.stableId}/papers`, ALICE, { paperId: "arxiv:1" })).status).toBe(404);
   });
 
+  // The CLI classifies a deferred sync by these exact 404 bodies (see
+  // apps/cli/src/helpers/sync-status.ts): "Project not found" → no-access (offer
+  // invite / unbind / bind), "Paper not found" → uncached (transient retry), and
+  // remove's "Paper not in project" → already-gone (no warning). The two 404s for
+  // add MUST stay distinguishable by message — status alone can't separate them,
+  // and a non-member must not be able to tell "absent" from "forbidden". Lock the
+  // strings here so a backend reword can't silently degrade the CLI guidance.
+  it("distinguishes no-access from uncached-paper by the 404 message (CLI contract)", async () => {
+    // Non-member filing into a real project → "Project not found" (existence-hidden).
+    const bobs = await createProject(BOB, "Bobs");
+    await seedPaper("arxiv:1");
+    const noAccess = await call("POST", `/${bobs.stableId}/papers`, ALICE, { paperId: "arxiv:1" });
+    expect(noAccess.status).toBe(404);
+    expect((noAccess.body as { error: string }).error).toBe("Project not found");
+
+    // A nonexistent project is byte-identical to a forbidden one (no leak).
+    const ghost = await call("POST", `/zzzzzzzz/papers`, ALICE, { paperId: "arxiv:1" });
+    expect(ghost.status).toBe(404);
+    expect((ghost.body as { error: string }).error).toBe("Project not found");
+
+    // Member filing an uncached paper → a DIFFERENT 404 ("Paper not found …").
+    const mine = await createProject(ALICE, "Mine");
+    const uncached = await call("POST", `/${mine.stableId}/papers`, ALICE, { paperId: "arxiv:0000.00000" });
+    expect(uncached.status).toBe(404);
+    expect((uncached.body as { error: string }).error).toMatch(/^Paper not found/);
+
+    // Removing a paper that was never filed → "Paper not in project" (benign).
+    const absent = await call("DELETE", `/${mine.stableId}/papers/arxiv:1`, ALICE);
+    expect(absent.status).toBe(404);
+    expect((absent.body as { error: string }).error).toBe("Paper not in project");
+  });
+
   // Classic arXiv ids carry a `/` (arxiv:hep-ph/0607008). The paperId is used
   // directly as a Firestore doc key in many places; without paperDocId the `/`
   // is read as a path separator and the add/manifest/remove flow 500s. Drive the

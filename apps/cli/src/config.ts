@@ -172,8 +172,29 @@ export function isSynced(cfg: ProjectConfig): boolean {
   return cfg.stableId !== undefined;
 }
 
+/**
+ * The `paperbaker/` directory for the current context. Walks up from `cwd` to the
+ * nearest ancestor that already holds a project (a `paperbaker/config.json`), so
+ * every command works from any subdirectory — including from inside `paperbaker/`
+ * itself — the way `git` works from anywhere in a repo.
+ *
+ * When no project is found above `cwd`, it falls back to `<cwd>/paperbaker` — the
+ * spot where `pb project create` scaffolds a new one. Because the walk keys on
+ * `config.json` (written last during create), every call during a create/bind
+ * consistently resolves to `<cwd>/paperbaker` until the project actually exists.
+ */
 export function getProjectDir(cwd?: string): string {
-  return path.join(cwd ?? process.cwd(), PROJECT_DIR);
+  const start = cwd ?? process.cwd();
+  let dir = start;
+  for (;;) {
+    if (fs.existsSync(path.join(dir, PROJECT_DIR, "config.json"))) {
+      return path.join(dir, PROJECT_DIR);
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break; // reached the filesystem root
+    dir = parent;
+  }
+  return path.join(start, PROJECT_DIR);
 }
 
 export function loadProjectConfig(cwd?: string): ProjectConfig | null {

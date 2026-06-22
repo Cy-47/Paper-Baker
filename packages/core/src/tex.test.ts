@@ -1,28 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
-  findMainTexFileByContent,
   stripTexComments,
   extractTexBody,
   collectFigurePaths,
 } from "./tex.js";
-
-describe("findMainTexFileByContent", () => {
-  it("picks the file containing documentclass", () => {
-    const files = new Map([
-      ["intro.tex", "Some intro text"],
-      ["root.tex", "\\documentclass{article}\\begin{document}hi\\end{document}"],
-    ]);
-    expect(findMainTexFileByContent(files)).toBe("root.tex");
-  });
-
-  it("falls back to main.tex by name when no documentclass", () => {
-    const files = new Map([
-      ["a.tex", "no class here"],
-      ["main.tex", "also no class"],
-    ]);
-    expect(findMainTexFileByContent(files)).toBe("main.tex");
-  });
-});
 
 describe("stripTexComments", () => {
   it("removes full and trailing comments but keeps escaped percent", () => {

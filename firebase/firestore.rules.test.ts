@@ -310,6 +310,19 @@ describe("projects/* — top-level, membership-gated reads, write backend-only",
     );
   });
 
+  it("hides existence: a read of a NONEXISTENT project is denied, not empty", async () => {
+    // The existence-hiding invariant: a non-member must not distinguish "doesn't
+    // exist" from "exists but forbidden" — otherwise project ids are enumerable.
+    // Both must fail the SAME way (permission denied). A `get` of a missing doc
+    // must be DENIED (resource.data is null → the membership check errors → deny),
+    // never returned as a successful empty snapshot. If a future rules edit makes
+    // missing docs readable (e.g. `resource == null || isMember(...)`), this fails.
+    await assertFails(getDoc(doc(authed(ALICE), "projects", "ghost000")));
+    await assertFails(
+      getDoc(doc(authed(ALICE), "projects", "ghost000", "projectPapers", "arxiv:1")),
+    );
+  });
+
   it("blocks a client from writing a project or membership directly", async () => {
     await assertFails(
       setDoc(doc(authed(ALICE), "projects", "ab23kd9p"), {

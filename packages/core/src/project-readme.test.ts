@@ -26,16 +26,23 @@ describe("sourceDirName", () => {
 });
 
 describe("generateProjectReadme", () => {
-  it("renders the guide with the project layout (no papers)", () => {
+  it("renders the CLI guide; with no papers it's the generic website reference", () => {
     const md = generateProjectReadme([]);
-    expect(md).toContain("# Paper Baker — Research Papers");
+    expect(md).toContain("# Paper Baker CLI");
     expect(md).toContain("paperbaker/sources/");
-    expect(md).not.toContain("## Papers in This Project");
+    // Reading guidance frames sources as code, not a single main.tex.
+    expect(md).toContain("Read and search");
+    expect(md).not.toMatch(/main\.tex.*entry point|entry point.*main\.tex/i);
+    // Variadic + concat-only behaviors are documented.
+    expect(md).toContain("pb add <id-or-url...>");
+    expect(md).toContain("every `.tex` file");
+    // No project-specific section when there are no papers.
+    expect(md).not.toContain("## Papers in this project");
   });
 
-  it("lists each paper with its source path", () => {
+  it("appends the project's own paper list when papers are present", () => {
     const md = generateProjectReadme([paper]);
-    expect(md).toContain("## Papers in This Project");
+    expect(md).toContain("## Papers in this project");
     expect(md).toContain("### Attention Is All You Need");
     expect(md).toContain("Ashish Vaswani, Noam Shazeer");
     expect(md).toContain("paperbaker/sources/arxiv-1706.03762/");

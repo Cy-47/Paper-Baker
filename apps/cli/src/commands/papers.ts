@@ -7,16 +7,17 @@ import {
   renderBibtexFile,
 } from "@paper-baker/core";
 import { ArxivProvider } from "@paper-baker/providers";
-import { PaperBakerClient } from "@paper-baker/api-client";
+import { PaperBakerClient, ApiError } from "@paper-baker/api-client";
 import {
   getApiUrl,
   loadProjectConfig,
   getProjectDir,
 } from "../config.js";
 import { resolveAuthToken } from "../helpers/auth.js";
-import { downloadAndExtractSource } from "../helpers/download.js";
+import { downloadSources } from "../helpers/download.js";
 import { writeProjectReadme } from "../helpers/project-readme.js";
 import { getSourceDir, ensureSourcesRepo } from "../helpers/sources.js";
+import { classifyProjectSyncError, syncFailureMessage } from "../helpers/sync-status.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -76,6 +77,26 @@ async function getApiClient(): Promise<PaperBakerClient | null> {
   });
 }
 
+/**
+ * Run a server-mirroring step for a bound, logged-in project, after local state
+ * is already written. A no-op when offline or unbound. On failure the local
+ * change stands; the deferred-sync guidance is shown once (classified into
+ * no-access / auth / transient — see helpers/sync-status.ts), never throwing.
+ */
+async function mirrorToServer(
+  run: (client: PaperBakerClient, stableId: string) => Promise<void>,
+  lead: string,
+): Promise<void> {
+  const client = await getApiClient();
+  const stableId = loadProjectConfig()?.stableId;
+  if (!client || !stableId) return;
+  try {
+    await run(client, stableId);
+  } catch (err) {
+    console.warn(syncFailureMessage(classifyProjectSyncError(err), lead));
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
@@ -84,129 +105,140 @@ export function registerPaperCommands(program: Command): void {
   // --- add ---
   program
     .command("add")
-    .description("Add a paper by arxiv ID or URL")
-    .argument("<id-or-url>", "arXiv ID (e.g. 2301.12345) or URL")
-    .action(async (input: string) => {
+    .description("Add one or more papers by arXiv ID or URL")
+    .argument("<id-or-url...>", "arXiv IDs or URLs (e.g. 2301.12345)")
+    .action(async (inputs: string[]) => {
       ensureProjectInit();
 
-      const arxivId = parseArxivId(input);
-      if (!arxivId) {
-        console.error(`Error: Could not parse arXiv ID from: ${input}`);
-        console.error("Expected format: 2301.12345 or https://arxiv.org/abs/2301.12345");
-        process.exit(1);
-      }
-
-      const paperId = `arxiv:${arxivId}`;
       const papers = loadPapers();
-
-      // Check if already added
-      if (papers.some((p) => p.paperId === paperId)) {
-        console.error(`Paper ${paperId} is already in this project.`);
-        process.exit(1);
-      }
-
-      // Fetch metadata from arxiv
-      console.log(`Fetching metadata for ${arxivId}...`);
+      const present = new Set(papers.map((p) => p.paperId));
       const provider = makeArxivProvider();
-      const metadata = await provider.fetchMetadata(arxivId);
-      if (!metadata) {
-        console.error(`Error: Could not find paper ${arxivId} on arXiv.`);
-        process.exit(1);
-      }
-
-      // Download and extract source
       ensureSourcesRepo();
-      const sourceDir = getSourceDir(metadata);
-      console.log(`Downloading source to ${path.relative(process.cwd(), sourceDir)}...`);
-      try {
-        await downloadAndExtractSource(arxivId, sourceDir);
-        console.log("Source extracted.");
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.warn(`Warning: Could not download source (${msg}).`);
-        metadata.sourceStatus = "pdf_only";
-      }
 
-      // Update papers.json
-      papers.push(metadata);
-      savePapers(papers);
+      // Process every input (don't stop on the first bad one), accumulating the
+      // successfully-added papers. papers.json / refs.bib / README and the server
+      // mirror are touched ONCE at the end, so a bulk add is one file rewrite and
+      // one sync pass, not N. Throttling is handled in the arXiv provider.
+      const added: PaperMetadata[] = [];
+      let failed = 0;
+      let skipped = 0;
 
-      // Regenerate refs.bib and paperbaker/README.md
-      regenerateBib(papers);
-      regenerateReadme(papers);
-
-      // Mirror to the server when this project is synced. Local state is already
-      // written, so a failure here isn't fatal — but surface it so the user knows
-      // local and server have drifted.
-      const client = await getApiClient();
-      const stableId = loadProjectConfig()?.stableId;
-      if (client && stableId) {
-        try {
-          // Resolve into the global papers/ cache first — addPaperToProject 404s
-          // for a paper the backend hasn't seen yet. Idempotent once cached.
-          await client.resolvePaper(metadata.source);
-          await client.addPaperToProject(stableId, paperId);
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          console.warn(
-            `Warning: added locally but could not update the server (${msg}). Run \`pb sync\` to retry.`,
-          );
+      for (const input of inputs) {
+        const arxivId = parseArxivId(input);
+        if (!arxivId) {
+          console.error(`Failed: ${input} — not a recognizable arXiv ID or URL.`);
+          failed++;
+          continue;
         }
+
+        const paperId = `arxiv:${arxivId}`;
+        if (present.has(paperId)) {
+          console.log(`Skipped (already present): ${paperId}`);
+          skipped++;
+          continue;
+        }
+
+        const metadata = await provider.fetchMetadata(arxivId);
+        if (!metadata) {
+          console.error(`Failed: ${arxivId} — not found on arXiv.`);
+          failed++;
+          continue;
+        }
+
+        papers.push(metadata);
+        present.add(paperId);
+        added.push(metadata);
+        console.log(`Added: ${metadata.title} (${paperId})`);
       }
 
-      console.log(`Added: ${metadata.title}`);
-      console.log(`  ID: ${metadata.paperId}`);
-      console.log(`  Authors: ${metadata.authors.map((a) => a.name).join(", ")}`);
+      if (added.length > 0) {
+        // Fetch the e-print sources through the shared, counted download UI so an
+        // add looks the same as a sync; a failure marks the paper pdf_only in place.
+        await downloadSources(added);
+        savePapers(papers);
+        regenerateBib(papers);
+        regenerateReadme(papers);
+        await mirrorToServer(async (client, stableId) => {
+          // Resolve into the global papers/ cache first — addPaperToProject 404s
+          // for a paper the backend hasn't seen yet. Idempotent once cached. The
+          // first failure throws out of the loop; mirrorToServer classifies it
+          // once (a no-access/auth failure applies to the whole batch, and any
+          // not-yet-pushed papers are already local for the next `pb sync`).
+          for (const p of added) {
+            await client.resolvePaper(p.source);
+            await client.addPaperToProject(stableId, p.paperId);
+          }
+        }, added.length === 1 ? "Added locally, but not synced" : `Added ${added.length} locally, but not synced`);
+      }
+
+      if (inputs.length > 1) {
+        console.log(`\n${added.length} added, ${skipped} skipped, ${failed} failed.`);
+      }
+      // Exit non-zero if any requested id couldn't be added locally, so a caller
+      // (e.g. a migration loop) can detect failure from $? rather than parsing
+      // stdout. A source-download miss is a partial success, not a failure; a
+      // sync miss is reported above but doesn't fail the command (it landed locally).
+      if (failed > 0) process.exit(1);
     });
 
   // --- remove ---
   program
     .command("remove")
-    .description("Remove a paper from the project")
-    .argument("<paper-id>", "Paper ID (e.g. arxiv:2301.12345)")
-    .action(async (paperId: string) => {
+    .description("Remove one or more papers from the project")
+    .argument("<paper-id...>", "Paper IDs (e.g. arxiv:2301.12345)")
+    .action(async (paperIds: string[]) => {
       ensureProjectInit();
 
       const papers = loadPapers();
-      const idx = papers.findIndex((p) => p.paperId === paperId);
-      if (idx === -1) {
-        console.error(`Error: Paper ${paperId} not found in this project.`);
-        process.exit(1);
-      }
+      const removed: PaperMetadata[] = [];
+      let failed = 0;
 
-      const paper = papers[idx];
-
-      // Remove source directory
-      const sourceDir = getSourceDir(paper);
-      if (fs.existsSync(sourceDir)) {
-        fs.rmSync(sourceDir, { recursive: true, force: true });
-      }
-
-      // Update papers.json
-      papers.splice(idx, 1);
-      savePapers(papers);
-
-      // Regenerate refs.bib and paperbaker/README.md
-      regenerateBib(papers);
-      regenerateReadme(papers);
-
-      // Mirror to the server when synced. Surface failures: if the remote delete
-      // doesn't land, the paper lives on and a later `pb sync` will re-add it
-      // locally, silently undoing this removal.
-      const client = await getApiClient();
-      const stableId = loadProjectConfig()?.stableId;
-      if (client && stableId) {
-        try {
-          await client.removePaperFromProject(stableId, paperId);
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          console.warn(
-            `Warning: removed locally but could not update the server (${msg}). Re-run \`pb remove ${paperId}\` to retry.`,
-          );
+      for (const paperId of paperIds) {
+        const idx = papers.findIndex((p) => p.paperId === paperId);
+        if (idx === -1) {
+          console.error(`Failed: ${paperId} — not in this project.`);
+          failed++;
+          continue;
         }
+
+        const paper = papers[idx];
+        const sourceDir = getSourceDir(paper);
+        if (fs.existsSync(sourceDir)) {
+          fs.rmSync(sourceDir, { recursive: true, force: true });
+        }
+        papers.splice(idx, 1);
+        removed.push(paper);
+        console.log(`Removed: ${paper.title} (${paperId})`);
       }
 
-      console.log(`Removed: ${paper.title} (${paperId})`);
+      if (removed.length > 0) {
+        savePapers(papers);
+        regenerateBib(papers);
+        regenerateReadme(papers);
+        // Mirror once. A 404 "Paper not in project" means the server is already in
+        // the desired state — skip it, the local removal stands.
+        await mirrorToServer(async (client, stableId) => {
+          for (const p of removed) {
+            try {
+              await client.removePaperFromProject(stableId, p.paperId);
+            } catch (err) {
+              if (
+                err instanceof ApiError &&
+                err.status === 404 &&
+                /Paper not in project/i.test(err.message)
+              ) {
+                continue;
+              }
+              throw err;
+            }
+          }
+        }, removed.length === 1 ? "Removed locally, but not synced" : `Removed ${removed.length} locally, but not synced`);
+      }
+
+      if (paperIds.length > 1) {
+        console.log(`\n${removed.length} removed, ${failed} failed.`);
+      }
+      if (failed > 0) process.exit(1);
     });
 
   // --- search ---

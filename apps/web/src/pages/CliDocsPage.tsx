@@ -1,9 +1,12 @@
-// The CLI documentation is authored as markdown in content/cli-docs.md and
-// inlined at build time via Vite's `?raw` suffix, then rendered with our themed
-// Markdown component.
-import cliDocs from "../content/cli-docs.md?raw";
+// The CLI documentation is the single source of truth shared with the in-repo
+// guide: `generateProjectReadme` in @paper-baker/core generates both. Here we
+// render it with no papers (the generic reference); the CLI writes the same text
+// into each project's paperbaker/README.md with that project's papers appended.
+import { generateProjectReadme } from "@paper-baker/core";
 import { DocsChrome } from "../components/DocsChrome";
 import { Markdown } from "../components/Markdown";
+
+const cliDocs = generateProjectReadme([]);
 
 export default function CliDocsPage() {
   return (
