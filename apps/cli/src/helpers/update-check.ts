@@ -149,11 +149,23 @@ export function launchAutoUpdate(): void {
     // Stamp BEFORE spawning so rapid back-to-back commands don't each fire a
     // worker (and don't hammer GitHub's unauthenticated rate limit).
     saveUpdateState({ ...state, lastCheckedMs: Date.now() });
+    // Spawn a detached worker that outlives this command. Re-spawning a pkg
+    // binary as a child of itself needs care. While running, this process has
+    // PKG_EXECPATH set to the executable path, which puts pkg's bootstrap in
+    // "app" mode: it treats argv[1] as a script path to run. A child that
+    // inherits that env therefore tries to load our SELF_UPDATE_ARGV sentinel as
+    // a module (MODULE_NOT_FOUND) and crashes before running a single line.
+    // Clearing PKG_EXECPATH switches the child to the default mode, where pkg
+    // INSERTS the real entrypoint (the in-VFS /snapshot path) at argv[1] itself —
+    // so we pass ONLY the sentinel and let it land at argv[2], where
+    // isAutoUpdateWorker() looks for it. (Cross-platform; detached + unref lets
+    // the worker outlive us.)
     const child = spawn(process.execPath, [SELF_UPDATE_ARGV], {
       detached: true,
       stdio: "ignore",
       // Don't flash a console window for the background worker on Windows.
       windowsHide: true,
+      env: { ...process.env, PKG_EXECPATH: "" },
     });
     child.unref();
   } catch {
