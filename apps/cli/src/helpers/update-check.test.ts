@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawn } from "node:child_process";
 import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
 import { VERSION } from "../version.js";
 import {
@@ -9,10 +10,26 @@ import {
   autoUpdateEnabled,
   dueForCheck,
   isAutoUpdateWorker,
+  launchAutoUpdate,
   loadUpdateState,
   saveUpdateState,
   announceAutoUpdate,
 } from "./update-check.js";
+
+// launchAutoUpdate re-spawns this binary as a detached worker. Stub the spawn so
+// we can assert HOW it launches without starting a process, and force the host
+// gates (packaged + signing) on so the spawn path is reached.
+vi.mock("node:child_process", () => ({
+  spawn: vi.fn(() => ({ unref: vi.fn() })),
+}));
+vi.mock("./release.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./release.js")>()),
+  isPackaged: () => true,
+}));
+vi.mock("./signature.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./signature.js")>()),
+  signingConfigured: () => true,
+}));
 
 // Hermetic: redirect the global config dir at a tmp dir so the update-state file
 // (update.json) never touches the real ~/ config. The env override is read at
@@ -149,5 +166,46 @@ describe("announceAutoUpdate", () => {
     announceAutoUpdate();
     const after = JSON.parse(readFileSync(join(dir, "update.json"), "utf8"));
     expect(after).toEqual({ lastCheckedMs: 42 });
+  });
+});
+
+describe("launchAutoUpdate", () => {
+  beforeEach(() => {
+    vi.mocked(spawn).mockClear();
+  });
+
+  it("clears PKG_EXECPATH and passes only the sentinel so the pkg child boots the app", () => {
+    // Fresh tmp config dir => due; mocked gates => packaged + signed + enabled.
+    launchAutoUpdate();
+
+    expect(spawn).toHaveBeenCalledTimes(1);
+    const [, args, opts] = vi.mocked(spawn).mock.calls[0];
+    // Regression guard: the worker crashed with MODULE_NOT_FOUND when the child
+    // inherited PKG_EXECPATH (pkg "app" mode treats argv[1] as a script path) or
+    // when we also passed the entrypoint ourselves (sentinel pushed off argv[2]).
+    expect(args).toEqual([SELF_UPDATE_ARGV]);
+    expect(opts?.detached).toBe(true);
+    expect((opts?.env as NodeJS.ProcessEnv).PKG_EXECPATH).toBe("");
+  });
+
+  it("stamps the check time before spawning (throttles back-to-back commands)", () => {
+    launchAutoUpdate();
+    expect(typeof loadUpdateState().lastCheckedMs).toBe("number");
+  });
+
+  it("does not spawn when a check is not yet due", () => {
+    saveUpdateState({ lastCheckedMs: Date.now() });
+    launchAutoUpdate();
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("does not spawn when auto-update is disabled via env", () => {
+    process.env["PAPERBAKER_NO_UPDATE"] = "1";
+    try {
+      launchAutoUpdate();
+      expect(spawn).not.toHaveBeenCalled();
+    } finally {
+      delete process.env["PAPERBAKER_NO_UPDATE"];
+    }
   });
 });
