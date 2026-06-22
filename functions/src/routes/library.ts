@@ -2,6 +2,7 @@ import { onRequest, type Request } from "firebase-functions/v2/https";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
 import type { Response } from "express";
 import type { Source } from "@paper-baker/core";
+import { paperDocId } from "@paper-baker/core";
 import { requireAuth } from "../middleware/auth.js";
 import { routePath } from "../lib/routePath.js";
 import { resolveAndCachePaper } from "../lib/resolvePaper.js";
@@ -86,7 +87,7 @@ async function handleSave(uid: string, req: Request, res: Response) {
   const paperId = resolved.paper.paperId;
 
   // Then the thin per-user record. Don't clobber an existing savedAt on re-save.
-  const ref = db().collection("users").doc(uid).collection("savedPapers").doc(paperId);
+  const ref = db().collection("users").doc(uid).collection("savedPapers").doc(paperDocId(paperId));
   const existing = await ref.get();
   const now = new Date().toISOString();
   if (!existing.exists) await ref.set({ paperId, savedAt: now });
@@ -105,7 +106,7 @@ async function handleUnsave(uid: string, paperId: string, res: Response) {
   const projects = await db().collection("projects").where("ownerUid", "==", uid).get();
   const batch = db().batch();
   for (const project of projects.docs) {
-    const memberRef = project.ref.collection("projectPapers").doc(paperId);
+    const memberRef = project.ref.collection("projectPapers").doc(paperDocId(paperId));
     const member = await memberRef.get();
     if (member.exists) {
       batch.delete(memberRef);
@@ -115,7 +116,7 @@ async function handleUnsave(uid: string, paperId: string, res: Response) {
       });
     }
   }
-  batch.delete(db().collection("users").doc(uid).collection("savedPapers").doc(paperId));
+  batch.delete(db().collection("users").doc(uid).collection("savedPapers").doc(paperDocId(paperId)));
   await batch.commit();
 
   res.status(200).json({ deleted: true });

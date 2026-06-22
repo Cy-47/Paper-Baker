@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 import type { Request } from "firebase-functions/v2/https";
 import type { Response } from "express";
-import { isValidStableId } from "@paper-baker/core";
+import { isValidStableId, paperDocId } from "@paper-baker/core";
 
 // High-level integration tests for the projects API, driven directly against the
 // Firestore emulator. Only token verification is mocked — every Firestore read,
@@ -360,5 +360,54 @@ describe("papers: add / remove / manifest", () => {
     const p = await createProject(BOB, "Bobs");
     await seedPaper("arxiv:1");
     expect((await call("POST", `/${p.stableId}/papers`, ALICE, { paperId: "arxiv:1" })).status).toBe(404);
+  });
+
+  // Classic arXiv ids carry a `/` (arxiv:hep-ph/0607008). The paperId is used
+  // directly as a Firestore doc key in many places; without paperDocId the `/`
+  // is read as a path separator and the add/manifest/remove flow 500s. Drive the
+  // whole flow end to end to prove the slash is handled at every doc() site.
+  it("files, manifests, and removes a classic (slashed) arXiv id end to end", async () => {
+    const CLASSIC = "arxiv:hep-ph/0607008";
+    const p = await createProject(ALICE, "Classic Papers");
+
+    // Seed the global papers cache at the sanitized doc key, with the canonical
+    // slashed paperId in the document body (the form resolve writes).
+    await getFirestore()
+      .collection("papers")
+      .doc(paperDocId(CLASSIC))
+      .set({ paperId: CLASSIC, title: "A Classic Paper", sourceStatus: "available" });
+
+    // Add — would throw "documentPath ... even number of components" pre-fix.
+    const add = await call("POST", `/${p.stableId}/papers`, ALICE, { paperId: CLASSIC });
+    expect(add.status).toBe(201);
+    expect((add.body as { paperId: string }).paperId).toBe(CLASSIC);
+
+    // The membership doc is keyed by the sanitized id, but stores the canonical one.
+    const memberDoc = await getFirestore()
+      .collection("projects").doc(p.stableId)
+      .collection("projectPapers").doc(paperDocId(CLASSIC)).get();
+    expect(memberDoc.exists).toBe(true);
+    expect(memberDoc.data()?.paperId).toBe(CLASSIC);
+
+    // Filing also saved it to the library, again keyed sanitized.
+    const saved = await getFirestore()
+      .collection("users").doc(ALICE)
+      .collection("savedPapers").doc(paperDocId(CLASSIC)).get();
+    expect(saved.exists).toBe(true);
+    expect(saved.data()?.paperId).toBe(CLASSIC);
+
+    // Manifest joins membership to metadata and surfaces the canonical paperId.
+    const manifest = await call("GET", `/${p.stableId}/manifest`, ALICE);
+    expect(manifest.status).toBe(200);
+    const m = manifest.body as { papers: { paperId: string; title: string }[] };
+    expect(m.papers.map((x) => x.paperId)).toEqual([CLASSIC]);
+    expect(m.papers[0].title).toBe("A Classic Paper");
+
+    // Remove — the slashed id round-trips through the URL segments and decrements.
+    const rm = await call("DELETE", `/${p.stableId}/papers/${CLASSIC}`, ALICE);
+    expect(rm.status).toBe(200);
+    expect((await call("GET", `/${p.stableId}`, ALICE)).status).toBe(200);
+    const got = await call("GET", `/${p.stableId}`, ALICE);
+    expect((got.body as ProjectShape).paperCount).toBe(0);
   });
 });

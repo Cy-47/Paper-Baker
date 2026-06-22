@@ -2,6 +2,7 @@ import { onRequest, type Request } from "firebase-functions/v2/https";
 import { getFirestore } from "firebase-admin/firestore";
 import type { Response } from "express";
 import type { PaperMetadata } from "@paper-baker/core";
+import { paperDocId } from "@paper-baker/core";
 import { requireAuth } from "../middleware/auth.js";
 import { routePath } from "../lib/routePath.js";
 import { searchArxiv } from "../lib/arxiv.js";
@@ -149,7 +150,7 @@ async function handleGetPaper(
   paperId: string,
   res: Response,
 ) {
-  const doc = await db().collection("papers").doc(paperId).get();
+  const doc = await db().collection("papers").doc(paperDocId(paperId)).get();
   if (!doc.exists) {
     res.status(404).json({ error: "Paper not found" });
     return;

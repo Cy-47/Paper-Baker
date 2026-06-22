@@ -18,6 +18,7 @@ import {
   type ProjectDoc,
   type Membership,
 } from "../lib/library";
+import { notifyError } from "../lib/notify";
 
 interface DataCtx {
   library: LibraryItem[];
@@ -47,18 +48,25 @@ export function DataProvider({ children }: { children: ReactNode }) {
       got += 1;
       if (got >= 3) setLoading(false);
     };
+    // A listener error (e.g. a missing index or revoked access) must surface AND
+    // release the loading gate — otherwise one failed subscription wedges the app
+    // on "Loading…" forever, which is exactly how the prod index bug presented.
+    const onErr = (what: string) => (e: Error) => {
+      notifyError(`Couldn't load your ${what}`, e);
+      done();
+    };
     const unsubSaved = subscribeSavedPapers((s) => {
       setSaved(s);
       done();
-    });
+    }, onErr("library"));
     const unsubProj = subscribeProjects((p) => {
       setProjects(p);
       done();
-    });
+    }, onErr("projects"));
     const unsubMembers = subscribeMemberships((m) => {
       setMemberships(m);
       done();
-    });
+    }, onErr("projects"));
     return () => {
       unsubSaved();
       unsubProj();
@@ -83,7 +91,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
     if (missing.length === 0) return;
     let cancelled = false;
     void Promise.all(
-      missing.map(async (id) => [id, await getPaperMeta(id)] as const)
+      // A single failed metadata read shouldn't reject the whole batch (and
+      // become an unhandled rejection); degrade that one row to null instead.
+      missing.map(
+        async (id) =>
+          [id, await getPaperMeta(id).catch(() => null)] as const
+      )
     ).then((pairs) => {
       if (cancelled) return;
       setMeta((prev) => {

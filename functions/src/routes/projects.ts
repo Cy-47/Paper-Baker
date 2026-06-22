@@ -15,6 +15,7 @@ import type {
 } from "@paper-baker/core";
 import {
   generateStableId,
+  paperDocId,
   slugify,
   uniqueProjectId,
 } from "@paper-baker/core";
@@ -330,13 +331,13 @@ async function handleAddPaper(
   const project = projectSnap.data() as Project;
 
   // Verify the paper exists in the global papers collection.
-  const paperDoc = await db().collection("papers").doc(paperId).get();
+  const paperDoc = await db().collection("papers").doc(paperDocId(paperId)).get();
   if (!paperDoc.exists) {
     res.status(404).json({ error: "Paper not found. Resolve it first via the papers API." });
     return;
   }
 
-  const memberRef = projectSnap.ref.collection("projectPapers").doc(paperId);
+  const memberRef = projectSnap.ref.collection("projectPapers").doc(paperDocId(paperId));
   const existing = await memberRef.get();
   if (existing.exists) {
     res.status(409).json({ error: "Paper already in project" });
@@ -354,7 +355,7 @@ async function handleAddPaper(
 
   // Every projectPaper implies a savedPapers entry for the acting user — filing a
   // paper also saves it to their library. Don't clobber an existing savedAt.
-  const savedRef = db().collection("users").doc(uid).collection("savedPapers").doc(paperId);
+  const savedRef = db().collection("users").doc(uid).collection("savedPapers").doc(paperDocId(paperId));
   const savedSnap = await savedRef.get();
 
   const batch = db().batch();
@@ -381,7 +382,7 @@ async function handleRemovePaper(
     return;
   }
 
-  const memberRef = projectSnap.ref.collection("projectPapers").doc(paperId);
+  const memberRef = projectSnap.ref.collection("projectPapers").doc(paperDocId(paperId));
   const memberDoc = await memberRef.get();
   if (!memberDoc.exists) {
     res.status(404).json({ error: "Paper not in project" });
@@ -413,17 +414,19 @@ async function handleGetManifest(uid: string, stableId: string, res: Response) {
 
   const paperIds = projectPapers.map((pp) => pp.paperId);
   const paperDocs = await Promise.all(
-    paperIds.map((id) => db().collection("papers").doc(id).get()),
+    paperIds.map((id) => db().collection("papers").doc(paperDocId(id)).get()),
   );
 
+  // Keyed by the sanitized doc id (doc.id), which is what paperDocId(pp.paperId)
+  // produces — so the join matches for classic ids too, not just new-style ones.
   const papersMap = new Map<string, PaperMetadata>();
   for (const doc of paperDocs) {
     if (doc.exists) papersMap.set(doc.id, doc.data() as PaperMetadata);
   }
 
   const papers = projectPapers
-    .filter((pp) => papersMap.has(pp.paperId))
-    .map((pp) => ({ ...papersMap.get(pp.paperId)!, projectPaper: pp }));
+    .filter((pp) => papersMap.has(paperDocId(pp.paperId)))
+    .map((pp) => ({ ...papersMap.get(paperDocId(pp.paperId))!, projectPaper: pp }));
 
   const manifest: ProjectManifest = {
     stableId: project.stableId,

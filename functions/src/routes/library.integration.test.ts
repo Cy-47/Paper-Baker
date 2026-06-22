@@ -37,7 +37,9 @@ vi.mock("../lib/arxiv.js", () => ({
 
 import { initializeApp, getApps } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
+import { paperDocId } from "@paper-baker/core";
 import { handleLibraryRequest } from "./library.js";
+import { fetchArxivMetadata } from "../lib/arxiv.js";
 
 const PROJECT_ID = "paper-baker";
 const ALICE = "alice-uid";
@@ -135,6 +137,40 @@ describe("POST /library — save", () => {
     // undefined keys were stripped, not stored as null or rejected.
     expect("doi" in (cached.data() as object)).toBe(false);
     expect(cached.data()?.title).toBe("A Paper Without A DOI");
+  });
+
+  it("saves a classic (slashed) arXiv id end to end — caches metadata + thin record", async () => {
+    // Classic ids carry a `/` (arxiv:hep-ph/0607008); used raw as a doc key the
+    // `/` is read as a path separator and the save 500s. Resolve fetches (mocked)
+    // metadata whose canonical paperId keeps the slash.
+    const CLASSIC = "arxiv:hep-ph/0607008";
+    vi.mocked(fetchArxivMetadata).mockResolvedValueOnce({
+      paperId: CLASSIC,
+      source: { type: "arxiv", id: "hep-ph/0607008" },
+      title: "A Classic Paper",
+      abstract: "z",
+      authors: [{ name: "Old" }],
+      publishedAt: "2006-07-01T00:00:00Z",
+      categories: ["hep-ph"],
+      links: { pdf: "p", abs: "a", source: "s" },
+      sourceStatus: "available",
+    });
+
+    const res = await call("POST", "/", ALICE, { source: { type: "arxiv", id: "hep-ph/0607008" } });
+    expect(res.status).toBe(201);
+    expect(res.body.paperId).toBe(CLASSIC);
+
+    // Metadata cached at the sanitized key, canonical paperId in the body.
+    const cached = await getFirestore().collection("papers").doc(paperDocId(CLASSIC)).get();
+    expect(cached.exists).toBe(true);
+    expect(cached.data()?.paperId).toBe(CLASSIC);
+
+    // Thin saved record likewise keyed sanitized, canonical id stored.
+    const saved = await getFirestore()
+      .collection("users").doc(ALICE)
+      .collection("savedPapers").doc(paperDocId(CLASSIC)).get();
+    expect(saved.exists).toBe(true);
+    expect(saved.data()).toEqual({ paperId: CLASSIC, savedAt: expect.any(String) });
   });
 
   it("rejects an unsupported source type", async () => {

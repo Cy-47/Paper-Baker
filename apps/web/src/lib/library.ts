@@ -10,7 +10,9 @@ import {
 } from "firebase/firestore";
 import { db, auth } from "./firebase";
 import type { PaperMetadata } from "@paper-baker/core";
+import { paperDocId } from "@paper-baker/core";
 import { getApiClient } from "./api";
+import { notifyError } from "./notify";
 
 // ---------------------------------------------------------------------------
 // The web's data layer. READS are direct Firestore snapshots (real-time);
@@ -76,7 +78,10 @@ function projectsCol() {
   return collection(db, "projects");
 }
 
-export function subscribeSavedPapers(cb: (saved: SavedRecord[]) => void) {
+export function subscribeSavedPapers(
+  cb: (saved: SavedRecord[]) => void,
+  onError?: (e: Error) => void
+) {
   return onSnapshot(libCol(), (snap) => {
     cb(
       snap.docs.map((d) => {
@@ -89,24 +94,32 @@ export function subscribeSavedPapers(cb: (saved: SavedRecord[]) => void) {
             : typeof raw === "string"
               ? raw
               : "";
-        return { paperId: d.id, savedAt };
+        // Prefer the canonical paperId stored in the doc over the doc key: for
+        // classic arXiv ids the key is sanitized (slash → `_`, see paperDocId),
+        // but memberships and metadata are joined on the canonical `arxiv:…/…`
+        // form, so surfacing the key would break those joins.
+        const paperId = (d.data().paperId as string | undefined) ?? d.id;
+        return { paperId, savedAt };
       })
     );
-  });
+  }, onError);
 }
 
 // Read a paper's canonical metadata from the global papers/{id} cache. The cache
 // is populated by the backend on resolve (the save endpoint resolves before
 // writing the thin record), so every saved/filed paper has an entry here.
 export async function getPaperMeta(paperId: string): Promise<PaperMetadata | null> {
-  const snap = await getDoc(doc(db, "papers", paperId));
+  const snap = await getDoc(doc(db, "papers", paperDocId(paperId)));
   return snap.exists() ? (snap.data() as PaperMetadata) : null;
 }
 
 // All of the current user's project memberships, in one collectionGroup query.
 // Authorized by the recursive projectPapers rule (read if member); the
 // array-contains filter is required for that rule to admit the query.
-export function subscribeMemberships(cb: (memberships: Membership[]) => void) {
+export function subscribeMemberships(
+  cb: (memberships: Membership[]) => void,
+  onError?: (e: Error) => void
+) {
   const q = query(
     collectionGroup(db, "projectPapers"),
     where("memberUids", "array-contains", uid())
@@ -121,10 +134,13 @@ export function subscribeMemberships(cb: (memberships: Membership[]) => void) {
         };
       })
     );
-  });
+  }, onError);
 }
 
-export function subscribeProjects(cb: (projects: ProjectDoc[]) => void) {
+export function subscribeProjects(
+  cb: (projects: ProjectDoc[]) => void,
+  onError?: (e: Error) => void
+) {
   const q = query(
     projectsCol(),
     where("memberUids", "array-contains", uid())
@@ -143,12 +159,24 @@ export function subscribeProjects(cb: (projects: ProjectDoc[]) => void) {
         };
       })
     );
-  });
+  }, onError);
 }
 
 // ---------------------------------------------------------------------------
 // Writes — through the Functions API (one shared backend implementation)
 // ---------------------------------------------------------------------------
+
+// Run a write, surfacing any failure as a toast before re-throwing. Re-throwing
+// keeps the existing contract for awaiting callers (their try/catch/finally still
+// runs); the toast is what makes fire-and-forget callers no longer fail silently.
+async function withToast<T>(summary: string, run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (err) {
+    notifyError(summary, err);
+    throw err;
+  }
+}
 
 /**
  * Create a project (backend mints the global stableId + an owner-unique id).
@@ -159,18 +187,24 @@ export async function createProject(
   name: string,
   description = "",
 ): Promise<{ stableId: string; id: string }> {
-  const project = await (await getApiClient()).createProject(name.trim(), description.trim());
-  return { stableId: project.stableId, id: project.id };
+  return withToast("Couldn't create the project", async () => {
+    const project = await (await getApiClient()).createProject(name.trim(), description.trim());
+    return { stableId: project.stableId, id: project.id };
+  });
 }
 
 /** Rename a project; the stableId (and every binding) is unchanged. */
 export async function renameProject(stableId: string, name: string): Promise<void> {
-  await (await getApiClient()).updateProject(stableId, { name: name.trim() });
+  await withToast("Couldn't rename the project", async () => {
+    await (await getApiClient()).updateProject(stableId, { name: name.trim() });
+  });
 }
 
 /** Save a paper to the library (backend resolves its metadata, then saves). */
 export async function saveToLibrary(paper: PaperMetadata): Promise<void> {
-  await (await getApiClient()).saveToLibrary(paper.source);
+  await withToast("Couldn't save the paper", async () => {
+    await (await getApiClient()).saveToLibrary(paper.source);
+  });
 }
 
 /** File a paper into a project. Ensures it's saved (resolved) first, then files. */
@@ -178,9 +212,11 @@ export async function addPaperToProject(
   stableId: string,
   paper: PaperMetadata
 ): Promise<void> {
-  const client = await getApiClient();
-  await client.saveToLibrary(paper.source);
-  await client.addPaperToProject(stableId, paper.paperId);
+  await withToast("Couldn't add the paper to the project", async () => {
+    const client = await getApiClient();
+    await client.saveToLibrary(paper.source);
+    await client.addPaperToProject(stableId, paper.paperId);
+  });
 }
 
 /** Unfile a paper from one project (leaves it saved in the library). */
@@ -188,12 +224,16 @@ export async function removePaperFromProject(
   stableId: string,
   paperId: string
 ): Promise<void> {
-  await (await getApiClient()).removePaperFromProject(stableId, paperId);
+  await withToast("Couldn't remove the paper from the project", async () => {
+    await (await getApiClient()).removePaperFromProject(stableId, paperId);
+  });
 }
 
 /** Unsave a paper entirely. The backend cascades the unfiling across projects. */
 export async function removeFromLibrary(paperId: string): Promise<void> {
-  await (await getApiClient()).removeFromLibrary(paperId);
+  await withToast("Couldn't remove the paper from your library", async () => {
+    await (await getApiClient()).removeFromLibrary(paperId);
+  });
 }
 
 // Dev-only: lets automated checks seed the library through the real save path

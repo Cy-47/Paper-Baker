@@ -1,6 +1,6 @@
 import { getFirestore } from "firebase-admin/firestore";
 import type { PaperMetadata, Source } from "@paper-baker/core";
-import { makePaperId } from "@paper-baker/core";
+import { makePaperId, paperDocId } from "@paper-baker/core";
 import { fetchArxivMetadata } from "./arxiv.js";
 
 /**
@@ -14,7 +14,7 @@ export async function resolveAndCachePaper(
   source: Source,
 ): Promise<{ paper: PaperMetadata; created: boolean } | null> {
   const paperId = makePaperId(source);
-  const ref = getFirestore().collection("papers").doc(paperId);
+  const ref = getFirestore().collection("papers").doc(paperDocId(paperId));
 
   const existing = await ref.get();
   if (existing.exists) return { paper: existing.data() as PaperMetadata, created: false };
@@ -46,17 +46,20 @@ export async function cacheSearchResults(
   const col = db.collection("papers");
 
   // One batched read to find which ids are missing (reads are cheap; writes,
-  // and arXiv's rate limit, are what we're protecting).
-  const refs = papers.map((p) => col.doc(p.paperId));
+  // and arXiv's rate limit, are what we're protecting). Keys are sanitized via
+  // paperDocId so classic ids (with a `/`) don't break the doc path; the
+  // `cached` set therefore holds sanitized ids and is compared against the
+  // sanitized form of each paperId.
+  const refs = papers.map((p) => col.doc(paperDocId(p.paperId)));
   const snaps = await db.getAll(...refs);
   const cached = new Set(snaps.filter((s) => s.exists).map((s) => s.id));
 
-  const toWrite = papers.filter((p) => !cached.has(p.paperId));
+  const toWrite = papers.filter((p) => !cached.has(paperDocId(p.paperId)));
   if (toWrite.length === 0) return 0;
 
   const batch = db.batch();
   for (const paper of toWrite) {
-    batch.set(col.doc(paper.paperId), stripUndefined(paper));
+    batch.set(col.doc(paperDocId(paper.paperId)), stripUndefined(paper));
   }
   await batch.commit();
   return toWrite.length;

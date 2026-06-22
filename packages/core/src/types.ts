@@ -108,13 +108,35 @@ export function makePaperId(source: Source): string {
   return `${source.type}:${source.id}`;
 }
 
+/**
+ * Firestore-safe document key for a paperId.
+ *
+ * A paperId is the canonical `${type}:${id}` (see makePaperId). Classic arXiv
+ * ids carry a `/` (e.g. `arxiv:hep-ph/0607008`), which Firestore interprets as a
+ * path separator and rejects as a single document key ("documentPath must point
+ * to a document ... does not contain an even number of components"). Replace
+ * every `/` with `_` so the key is one path segment.
+ *
+ * New-style ids (no `/`) map to themselves, so every already-cached doc keeps
+ * its key — this MUST be applied at every read AND write keyed by paperId so the
+ * two agree. We deliberately do NOT use encodeURIComponent: it would also encode
+ * the `:` separator and change the keys of existing new-style ids. The canonical
+ * `paperId` stored INSIDE the document keeps the original `/` form — only the
+ * doc key is sanitized.
+ */
+export function paperDocId(paperId: string): string {
+  return paperId.replace(/\//g, "_");
+}
+
 export function parseArxivId(input: string): string | null {
   const urlMatch = input.match(
     /arxiv\.org\/(?:abs|pdf|e-print)\/(\d{4}\.\d{4,5}(?:v\d+)?)/
   );
   if (urlMatch) return urlMatch[1];
 
-  const bareMatch = input.match(/^(\d{4}\.\d{4,5}(?:v\d+)?)$/);
+  // Accept a bare id, optionally with the `arxiv:` prefix that `pb search`
+  // prints — so a search result can be pasted straight into `pb add`.
+  const bareMatch = input.match(/^(?:arxiv:)?(\d{4}\.\d{4,5}(?:v\d+)?)$/);
   if (bareMatch) return bareMatch[1];
 
   return null;

@@ -5,6 +5,7 @@ import { arxiv } from "../lib/arxiv";
 import { getApiClient } from "../lib/api";
 import { useData } from "../hooks/useData";
 import { addPaperToProject } from "../lib/library";
+import { notifyError } from "../lib/notify";
 import { parseArxivId, type PaperMetadata } from "@paper-baker/core";
 import ProjectChips from "./ProjectChips";
 import PaperRow from "./PaperRow";
@@ -51,6 +52,9 @@ export default function AddPaperModal({
         ? ([await arxiv.fetchMetadata(id)].filter(Boolean) as PaperMetadata[])
         : await (await getApiClient()).searchPapers(query, 8);
       setArxivResults(res);
+    } catch (err) {
+      setArxivResults([]);
+      notifyError("arXiv search failed", err);
     } finally {
       setSearching(false);
     }
