@@ -9,6 +9,7 @@ import {
   generateRootBrief,
   resolveRootAgentFile,
   writeRootBrief,
+  refreshRootBrief,
   applyRootBrief,
 } from "./root-brief.js";
 
@@ -91,6 +92,46 @@ describe("writeRootBrief", () => {
     const res2 = writeRootBrief(dir);
     expect(res2.status).toBe("present");
     expect(countBlocks(readFileSync(join(dir, "AGENTS.md"), "utf-8"))).toBe(1);
+  });
+});
+
+describe("refreshRootBrief", () => {
+  it("replaces a stale managed block in place, leaving surrounding text intact", () => {
+    const stale = `# My project\n\nDo the thing.\n\n${ROOT_BRIEF_BEGIN}\nOLD STALE TEXT\n${ROOT_BRIEF_END}\n\n## Footer notes\n`;
+    writeFileSync(join(dir, "AGENTS.md"), stale);
+
+    const res = refreshRootBrief(dir);
+    expect(res.status).toBe("refreshed");
+
+    const out = readFileSync(join(dir, "AGENTS.md"), "utf-8");
+    expect(out).not.toContain("OLD STALE TEXT");
+    expect(out).toContain("paperbaker/README.md"); // fresh template content
+    expect(countBlocks(out)).toBe(1);
+    // Text outside the markers survives.
+    expect(out).toContain("Do the thing.");
+    expect(out).toContain("## Footer notes");
+  });
+
+  it("is a no-op when the block already matches the current template", () => {
+    writeRootBrief(dir);
+    const res = refreshRootBrief(dir);
+    expect(res.status).toBe("unchanged");
+  });
+
+  it("does nothing when no managed block is present", () => {
+    writeFileSync(join(dir, "AGENTS.md"), "# Just my notes\n");
+    const res = refreshRootBrief(dir);
+    expect(res.status).toBe("absent");
+    expect(readFileSync(join(dir, "AGENTS.md"), "utf-8")).toBe("# Just my notes\n");
+  });
+
+  it("never injects into a project that declined the brief", () => {
+    saveProjectConfig({ name: "Test", rootBrief: "declined" }, dir);
+    writeFileSync(join(dir, "AGENTS.md"), `${ROOT_BRIEF_BEGIN}\nx\n${ROOT_BRIEF_END}\n`);
+    const res = refreshRootBrief(dir);
+    expect(res.status).toBe("absent");
+    // Untouched — we bail before reading/rewriting.
+    expect(readFileSync(join(dir, "AGENTS.md"), "utf-8")).toContain("\nx\n");
   });
 });
 

@@ -16,6 +16,7 @@ import {
   launchAutoUpdate,
   runAutoUpdateWorker,
 } from "./helpers/update-check.js";
+import { refreshDocsIfStale } from "./helpers/refresh-docs.js";
 
 // A detached background process re-invokes this binary with a hidden self-update
 // argument (see launchAutoUpdate). Do the silent download/swap and exit before any
@@ -85,13 +86,36 @@ program.hook("postAction", async (_thisCommand, actionCommand) => {
   }
 });
 
+// After the binary self-updates, the next in-project command brings every
+// generated file (paperbaker/README.md, refs.bib, the root agent brief) up to the
+// new release's templates. Gated on a per-project version stamp, so it's a single
+// config read on an unchanged binary; runs locally regardless of auth/sync. Skip
+// the non-project + maintenance commands — `update` itself runs as the OLD binary,
+// so refreshing there would stamp the stale version (the next command handles it).
+const NO_DOCS_REFRESH = new Set([
+  "login",
+  "logout",
+  "whoami",
+  "update",
+  "uninstall",
+  "search",
+]);
+program.hook("postAction", (_thisCommand, actionCommand) => {
+  if (NO_DOCS_REFRESH.has(actionCommand.name())) return;
+  try {
+    refreshDocsIfStale();
+  } catch {
+    // Best-effort: never let a docs refresh fail the command.
+  }
+});
+
 // Throttled background self-update: spawns a detached worker (see
 // helpers/update-check.ts) so the next invocation runs the latest release. Runs
 // for every command except update/uninstall, which manage the binary themselves.
 const NO_AUTOUPDATE = new Set(["update", "uninstall"]);
-program.hook("postAction", (_thisCommand, actionCommand) => {
+program.hook("postAction", async (_thisCommand, actionCommand) => {
   if (NO_AUTOUPDATE.has(actionCommand.name())) return;
-  launchAutoUpdate();
+  await launchAutoUpdate();
 });
 
 registerLoginCommands(program);

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { beforeEach, afterEach, describe, it, expect, vi } from "vitest";
 import { VERSION } from "../version.js";
+import { fetchLatestTag } from "./release.js";
 import {
   UPDATE_INTERVAL_MS,
   SELF_UPDATE_ARGV,
@@ -25,6 +26,10 @@ vi.mock("node:child_process", () => ({
 vi.mock("./release.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./release.js")>()),
   isPackaged: () => true,
+  // The foreground launcher now does one lightweight tag lookup to decide
+  // whether to announce an available update; default it to a clearly-newer tag
+  // so the spawn path is reached, and override per-test for the other cases.
+  fetchLatestTag: vi.fn(async () => "v9.9.9"),
 }));
 vi.mock("./signature.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./signature.js")>()),
@@ -170,13 +175,18 @@ describe("announceAutoUpdate", () => {
 });
 
 describe("launchAutoUpdate", () => {
+  let err: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
     vi.mocked(spawn).mockClear();
+    // Default: a clearly-newer tag so the announce+spawn path runs. Clear call
+    // history too so per-test "was it fetched?" assertions aren't polluted.
+    vi.mocked(fetchLatestTag).mockReset().mockResolvedValue("v9.9.9");
+    err = vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
-  it("clears PKG_EXECPATH and passes only the sentinel so the pkg child boots the app", () => {
+  it("clears PKG_EXECPATH and passes only the sentinel so the pkg child boots the app", async () => {
     // Fresh tmp config dir => due; mocked gates => packaged + signed + enabled.
-    launchAutoUpdate();
+    await launchAutoUpdate();
 
     expect(spawn).toHaveBeenCalledTimes(1);
     const [, args, opts] = vi.mocked(spawn).mock.calls[0];
@@ -188,21 +198,58 @@ describe("launchAutoUpdate", () => {
     expect((opts?.env as NodeJS.ProcessEnv).PKG_EXECPATH).toBe("");
   });
 
-  it("stamps the check time before spawning (throttles back-to-back commands)", () => {
-    launchAutoUpdate();
+  it("announces the available update to stderr, then spawns the worker", async () => {
+    await launchAutoUpdate();
+    expect(err).toHaveBeenCalledTimes(1);
+    const msg = String(err.mock.calls[0][0]);
+    expect(msg).toContain("9.9.9"); // the available version
+    expect(msg).toMatch(/background/i); // ...and that it's updating in the background
+    expect(spawn).toHaveBeenCalledTimes(1);
+  });
+
+  it("stays silent and does NOT spawn when already on the latest version", async () => {
+    vi.mocked(fetchLatestTag).mockResolvedValue(`v${VERSION}`); // not newer than VERSION
+    await launchAutoUpdate();
+    expect(err).not.toHaveBeenCalled();
+    expect(spawn).not.toHaveBeenCalled();
+    // Still stamped, so we don't re-check until the next interval.
     expect(typeof loadUpdateState().lastCheckedMs).toBe("number");
   });
 
-  it("does not spawn when a check is not yet due", () => {
+  it("does not fetch or announce under PAPERBAKER_QUIET, but still spawns the worker", async () => {
+    process.env["PAPERBAKER_QUIET"] = "1";
+    try {
+      await launchAutoUpdate();
+      expect(fetchLatestTag).not.toHaveBeenCalled();
+      expect(err).not.toHaveBeenCalled();
+      expect(spawn).toHaveBeenCalledTimes(1);
+    } finally {
+      delete process.env["PAPERBAKER_QUIET"];
+    }
+  });
+
+  it("falls back to a silent spawn when the availability check fails", async () => {
+    vi.mocked(fetchLatestTag).mockRejectedValue(new Error("network down"));
+    await launchAutoUpdate();
+    expect(err).not.toHaveBeenCalled(); // no notice when we couldn't determine availability
+    expect(spawn).toHaveBeenCalledTimes(1); // ...but the worker still gets its shot
+  });
+
+  it("stamps the check time before spawning (throttles back-to-back commands)", async () => {
+    await launchAutoUpdate();
+    expect(typeof loadUpdateState().lastCheckedMs).toBe("number");
+  });
+
+  it("does not spawn when a check is not yet due", async () => {
     saveUpdateState({ lastCheckedMs: Date.now() });
-    launchAutoUpdate();
+    await launchAutoUpdate();
     expect(spawn).not.toHaveBeenCalled();
   });
 
-  it("does not spawn when auto-update is disabled via env", () => {
+  it("does not spawn when auto-update is disabled via env", async () => {
     process.env["PAPERBAKER_NO_UPDATE"] = "1";
     try {
-      launchAutoUpdate();
+      await launchAutoUpdate();
       expect(spawn).not.toHaveBeenCalled();
     } finally {
       delete process.env["PAPERBAKER_NO_UPDATE"];

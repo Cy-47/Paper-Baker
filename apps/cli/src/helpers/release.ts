@@ -215,13 +215,18 @@ export function swapBinary(
   }
 }
 
-/** Fetch the latest release's tag from the GitHub API. */
-export async function fetchLatestTag(): Promise<string> {
+/**
+ * Fetch the latest release's tag from the GitHub API. `timeoutMs` aborts a slow
+ * request — used by the foreground "update available" notice so a stalled
+ * network can't delay the command (the background worker calls it untimed).
+ */
+export async function fetchLatestTag(opts: { timeoutMs?: number } = {}): Promise<string> {
   const res = await fetch(`${GITHUB_API}/repos/${RELEASE_REPO}/releases/latest`, {
     headers: {
       Accept: "application/vnd.github+json",
       "User-Agent": "paper-baker-cli",
     },
+    signal: opts.timeoutMs ? AbortSignal.timeout(opts.timeoutMs) : undefined,
   });
   if (!res.ok) {
     throw new Error(`GitHub API returned ${res.status} ${res.statusText}`);

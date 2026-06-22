@@ -153,6 +153,10 @@ export const PROJECT_DIR = "paperbaker";
  *   - `rootBrief` — records the one-time decision about the root agent brief (see
  *                   helpers/root-brief.ts): "added" once injected, "declined" if
  *                   the user opted out. Its presence means "don't ask again".
+ *   - `docsVersion` — the pb version that last generated this project's derived
+ *                   docs (README.md, refs.bib, root brief). When it lags the
+ *                   running binary, the next command regenerates them from the new
+ *                   release's templates and re-stamps it. See helpers/refresh-docs.ts.
  */
 export interface ProjectConfig {
   name: string;
@@ -160,6 +164,7 @@ export interface ProjectConfig {
   id?: string;
   ownerHandle?: string;
   rootBrief?: "added" | "declined";
+  docsVersion?: string;
 }
 
 /** True once the project has been synced to the server (has a stable id). */

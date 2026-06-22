@@ -66,6 +66,40 @@ export function writeRootBrief(cwd?: string): { file: string; name: string; stat
   return { file, name, status: "added" };
 }
 
+/**
+ * Refresh an already-injected brief in place: swap the content between the
+ * BEGIN/END markers for the running binary's `generateRootBrief()` output. Used
+ * by the post-upgrade docs refresh so an existing brief tracks template changes.
+ *
+ * Deliberately conservative — it only ever touches a block that's already there:
+ *   - `declined` projects, or any project with no marked block, are left alone
+ *     (we never inject a brief the user didn't ask for during a refresh).
+ *   - text outside the markers is untouched; only the managed block is replaced.
+ */
+export function refreshRootBrief(cwd?: string): { status: "refreshed" | "unchanged" | "absent" } {
+  const cfg = loadProjectConfig(cwd);
+  if (cfg?.rootBrief === "declined") return { status: "absent" };
+
+  const { file, existed } = resolveRootAgentFile(cwd);
+  if (!existed) return { status: "absent" };
+
+  const existing = fs.readFileSync(file, "utf-8");
+  const begin = existing.indexOf(ROOT_BRIEF_BEGIN);
+  const endMarker = existing.indexOf(ROOT_BRIEF_END);
+  if (begin === -1 || endMarker === -1 || endMarker < begin) return { status: "absent" };
+
+  // Replace BEGIN..END inclusive; keep whatever precedes/follows verbatim. The
+  // generator's block carries a trailing newline we drop here, since `after`
+  // already retains the original spacing after the END marker.
+  const before = existing.slice(0, begin);
+  const after = existing.slice(endMarker + ROOT_BRIEF_END.length);
+  const next = before + generateRootBrief().trimEnd() + after;
+  if (next === existing) return { status: "unchanged" };
+
+  fs.writeFileSync(file, next);
+  return { status: "refreshed" };
+}
+
 export type RootBriefDecision = "added" | "declined" | "already-decided";
 
 /**

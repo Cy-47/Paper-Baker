@@ -136,19 +136,47 @@ export function announceAutoUpdate(): void {
   saveUpdateState(rest);
 }
 
+/** How long the foreground availability check waits before giving up. Kept short
+ *  so a slow network can't noticeably delay the command that triggered it. */
+export const FOREGROUND_CHECK_TIMEOUT_MS = 3000;
+
 /**
- * Foreground: if eligible and due, stamp the check time and spawn a detached,
- * unref'd worker so the current command exits immediately. Best-effort — any
+ * Foreground: if eligible and due, stamp the check time, tell the user an update
+ * is starting, and spawn a detached, unref'd worker that does the actual
+ * download/swap so the current command exits immediately. Best-effort — any
  * failure is swallowed.
+ *
+ * To say "vX is available" we must actually know it is, so this does one
+ * lightweight, short-timeout tag lookup (skipped under PAPERBAKER_QUIET). The
+ * heavy download/swap still happens in the detached worker; we never wait on it.
  */
-export function launchAutoUpdate(): void {
+export async function launchAutoUpdate(): Promise<void> {
   try {
     if (!autoUpdateEnabledHere()) return;
     const state = loadUpdateState();
     if (!dueForCheck(state, Date.now())) return;
-    // Stamp BEFORE spawning so rapid back-to-back commands don't each fire a
-    // worker (and don't hammer GitHub's unauthenticated rate limit).
+    // Stamp BEFORE the check/spawn so rapid back-to-back commands don't each fire
+    // a worker (and don't hammer GitHub's unauthenticated rate limit).
     saveUpdateState({ ...state, lastCheckedMs: Date.now() });
+
+    // Announce an available update before kicking off the background swap. The
+    // notice needs the version, so we look up the latest tag here — short-
+    // timeout'd so a stalled network can't hold up the command. If we learn we're
+    // already current, there's nothing to do and we skip the worker entirely; if
+    // the check fails we stay silent and let the worker try on its own (below).
+    if (!process.env["PAPERBAKER_QUIET"]) {
+      try {
+        const tag = await fetchLatestTag({ timeoutMs: FOREGROUND_CHECK_TIMEOUT_MS });
+        if (!isNewer(tag, VERSION)) return;
+        console.error(
+          `pb ${normalizeVersion(tag)} is available — auto-updating in the background ` +
+            `(applies on your next command).`,
+        );
+      } catch {
+        // Couldn't determine availability (offline/slow/rate-limited): no notice,
+        // but still give the worker its shot.
+      }
+    }
     // Spawn a detached worker that outlives this command. Re-spawning a pkg
     // binary as a child of itself needs care. While running, this process has
     // PKG_EXECPATH set to the executable path, which puts pkg's bootstrap in

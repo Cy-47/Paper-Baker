@@ -16,11 +16,11 @@ import {
   scaffoldProjectFiles,
   loadPapers,
   savePapers,
-  rebuildArtifacts,
 } from "../helpers/project-files.js";
 import { reconcilePapers, papersInSync, type BindMode } from "../helpers/reconcile.js";
 import { isInteractive, promptLine, promptChoice } from "../helpers/prompt.js";
 import { applyRootBrief } from "../helpers/root-brief.js";
+import { refreshDocsIfStale } from "../helpers/refresh-docs.js";
 
 // ---------------------------------------------------------------------------
 // Small command-layer helpers
@@ -126,6 +126,11 @@ export async function runCreate(
   }
 
   await announceRootBrief(opts.brief === false);
+
+  // Generate the derived docs (README, refs.bib, brief) and stamp the version
+  // now, so they exist the moment create returns rather than on the next command.
+  // The post-command refresh hook then no-ops against the fresh stamp.
+  refreshDocsIfStale();
 }
 
 /** Run the one-time root-brief step and print a one-line result. */
@@ -228,7 +233,6 @@ async function runBind(
     stableId: project.stableId,
     ownerHandle: project.ownerHandle,
   });
-  rebuildArtifacts(local);
 
   console.log(
     `Bound to "${project.name}" (id: ${remoteCoord(project)}) via ${mode}.` +
@@ -236,6 +240,11 @@ async function runBind(
   );
 
   await announceRootBrief(opts.brief === false);
+
+  // As with create: regenerate docs from the just-saved papers and stamp the
+  // version up front, so the bound project's files are current immediately and
+  // the refresh hook stays a no-op.
+  refreshDocsIfStale();
 }
 
 // ---------------------------------------------------------------------------
