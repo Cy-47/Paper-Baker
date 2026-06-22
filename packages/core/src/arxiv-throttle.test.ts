@@ -92,6 +92,38 @@ describe("createThrottledFetch", () => {
     expect(slept).toEqual([3000, 6000]); // 3000*2^0, 3000*2^1
   });
 
+  it("backs off on 503 even when minIntervalMs is 0 (backend config)", async () => {
+    // The backend sets minIntervalMs: 0 (global spacing is enforced elsewhere by
+    // a Firestore slot limiter). Retry backoff must NOT collapse to 0, or a 503
+    // with no Retry-After would be retried instantly and immediately re-fail.
+    const clock = makeClock();
+    const slept: number[] = [];
+    const sleep = (ms: number) => {
+      if (ms > 0) slept.push(ms);
+      clock.advance(ms);
+      return Promise.resolve();
+    };
+    let calls = 0;
+    const fetchImpl = async () => {
+      calls++;
+      return calls < 3
+        ? new Response("Rate exceeded.", { status: 503 }) // no Retry-After header
+        : new Response("ok", { status: 200 });
+    };
+
+    const f = createThrottledFetch({
+      minIntervalMs: 0,
+      maxRetries: 3,
+      now: clock.now,
+      sleep,
+      fetchImpl,
+    });
+
+    const res = await f("u");
+    expect(res.status).toBe(200);
+    expect(slept).toEqual([3000, 6000]); // default retry backoff, independent of minIntervalMs
+  });
+
   it("honors a Retry-After header when longer than the backoff", async () => {
     const clock = makeClock();
     const slept: number[] = [];

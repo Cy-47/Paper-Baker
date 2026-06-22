@@ -10,6 +10,13 @@ export interface ThrottledFetchOptions {
   minIntervalMs?: number;
   /** How many times to retry on a 429/503 before returning it. */
   maxRetries?: number;
+  /**
+   * Base delay for exponential retry backoff on a 429/503, in ms. Independent of
+   * minIntervalMs: the backend sets minIntervalMs to 0 (it spaces requests via a
+   * shared Firestore limiter instead), but still needs real backoff so a 503 with
+   * no Retry-After isn't retried instantly. Defaults to 3000.
+   */
+  retryBackoffMs?: number;
   /** Identifies the client to arXiv; sent as the User-Agent header. */
   userAgent?: string;
   // --- seams for deterministic tests; default to the real clock/network ---
@@ -60,6 +67,7 @@ export function createThrottledFetch(
 ): ThrottledFetch {
   const minIntervalMs = options.minIntervalMs ?? DEFAULT_MIN_INTERVAL_MS;
   const maxRetries = options.maxRetries ?? DEFAULT_MAX_RETRIES;
+  const retryBackoffMs = options.retryBackoffMs ?? DEFAULT_MIN_INTERVAL_MS;
   const userAgent = options.userAgent ?? DEFAULT_USER_AGENT;
   const now = options.now ?? (() => Date.now());
   const sleep =
@@ -81,7 +89,7 @@ export function createThrottledFetch(
       const res = await fetchImpl(url, withUserAgent(init, userAgent));
       if ((res.status === 429 || res.status === 503) && attempt < maxRetries) {
         const retryAfter = parseRetryAfter(res.headers.get("retry-after"), now());
-        const backoff = Math.max(retryAfter ?? 0, minIntervalMs * 2 ** attempt);
+        const backoff = Math.max(retryAfter ?? 0, retryBackoffMs * 2 ** attempt);
         await sleep(backoff);
         continue;
       }

@@ -3,10 +3,19 @@ import { createThrottledFetch, arxivSearchParams, parseArxivFeed } from "@paper-
 import { acquireArxivSlot } from "./arxivRateLimit.js";
 
 // Per-instance fetch: keeps the User-Agent, 429/503 backoff, and single-in-flight
-// behavior, but with NO spacing of its own (minIntervalMs: 0). Global 3s spacing
-// is enforced across ALL Cloud Function instances by acquireArxivSlot() below — a
-// per-process throttle can't bound a shared, many-instance egress on its own.
-const arxivFetch = createThrottledFetch({ minIntervalMs: 0 });
+// behavior, but with NO request spacing of its own (minIntervalMs: 0). Global 3s
+// spacing is enforced across ALL Cloud Function instances by acquireArxivSlot()
+// below — a per-process throttle can't bound a shared, many-instance egress on
+// its own. arXiv intermittently sheds load with a 503 "Rate exceeded" (no
+// Retry-After) even for well-spaced requests, so we still need real backoff here;
+// retryBackoffMs is independent of minIntervalMs precisely so it doesn't collapse
+// to 0. Two retries (3s, 6s) keep the worst case comfortably under the 60s
+// function timeout even after the slot wait.
+const arxivFetch = createThrottledFetch({
+  minIntervalMs: 0,
+  retryBackoffMs: 3000,
+  maxRetries: 2,
+});
 
 /**
  * Fetch paper metadata from the arxiv Atom API for a single paper ID.
